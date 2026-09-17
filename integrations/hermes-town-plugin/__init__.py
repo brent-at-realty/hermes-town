@@ -296,7 +296,10 @@ def _read_token(path: str) -> Optional[str]:
     if not stat.S_ISREG(info.st_mode):
         logger.warning("hermes-town: bridge token path is not a regular file; bridge inert")
         return None
-    if info.st_mode & 0o077:
+    # Windows has no POSIX mode bits: stat reports 0o666 for every file, so
+    # the check would keep the bridge inert there. NTFS ACLs protect the file,
+    # and the server applies the same rule.
+    if os.name != "nt" and info.st_mode & 0o077:
         logger.warning(
             "hermes-town: bridge token file is group/world accessible; bridge inert "
             "(chmod 600 the file to enable)"
@@ -341,6 +344,10 @@ class _Bridge:
         self.dropped = 0
         self.delivered = 0
         self.delivery_failures = 0
+        # Events accepted into the queue, and events whose batch has finished
+        # its delivery attempt. Equal means nothing is queued or in flight.
+        self.enqueued = 0
+        self.processed = 0
         self.unclassified_stops = 0
         # A child whose own run_conversation ended before its parent reported
         # what really happened. Published nothing; see _on_session_end.
@@ -466,6 +473,7 @@ class _Bridge:
             event["outcome"] = outcome
         try:
             self._queue.put_nowait(event)
+            self.enqueued += 1
         except queue.Full:
             # Drop the newest. An old event still in the queue describes a
             # transition the town has not seen yet; a new one usually does not.
@@ -499,6 +507,7 @@ class _Bridge:
                     break
             for body in self._bodies(batch):
                 self._deliver(body)
+            self.processed += len(batch)
 
     def _bodies(self, batch):
         """Split one batch into <= 8 KiB JSON bodies."""
