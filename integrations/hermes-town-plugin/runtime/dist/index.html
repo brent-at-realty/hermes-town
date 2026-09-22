@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hermes Town</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <script type="module" crossorigin src="/assets/index-BDVKR3ys.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-N6iO-ndU.css">
+  </head>
+  <body>
+    <div id="game"></div>
+    <div id="hud">
+      <div id="masthead">
+        <div class="kicker">hermes runtime interface</div>
+        <div class="title">Hermes Town</div>
+        <div id="status" class="status" role="status">starting</div>
+        <details id="connection-help" hidden>
+          <summary>Connect Hermes</summary>
+          <p id="connection-note"></p>
+          <ol>
+            <li>Install and enable the Hermes Town plugin.</li>
+            <li>Run <code>hermes town start</code> on the Hermes host.</li>
+            <li>Start a new Hermes CLI session, or restart your gateway, then run a turn.</li>
+          </ol>
+          <p><code>hermes town status</code> checks local setup and delivery.</p>
+          <p class="privacy-note">Only lifecycle metadata. No prompts, messages, or tool output. Keep live mode local.</p>
+        </details>
+      </div>
+      <div id="controls">
+        <button id="overview">Town view</button>
+        <button data-goto="library">Library</button>
+        <button data-goto="workshop">Workshop</button>
+        <button data-goto="forge">Forge</button>
+        <button data-goto="post">Post office</button>
+        <button data-goto="observatory">Observatory</button>
+        <button data-goto="hall">Town hall</button>
+        <button data-goto="tavern">Tavern</button>
+        <button id="follow">Follow: off</button>
+        <button id="director" class="on">Director: on</button>
+      </div>
+      <div id="panel" hidden></div>
+      <canvas id="minimap" width="192" height="120"></canvas>
+      <div id="foot">drag to pan · scroll to zoom · click a resident</div>
+    </div>
+  </body>
+</html>

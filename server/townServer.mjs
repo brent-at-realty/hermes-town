@@ -9,8 +9,8 @@
 //      with cursor replay, all same-origin;
 //   4. never let anything else through.
 //
-// Trust boundary: the ingress route is the only authenticated surface and the
-// only writer. The public routes are read-only, unauthenticated, same-origin,
+// Trust boundary: ingress writes events. Optional launcher management uses a
+// separate per-process secret, never the bridge token. The public routes are read-only, unauthenticated, same-origin,
 // and serve exactly the sanitised events the ingress route produced. The bearer
 // token is read once at boot and never appears in a response, a log line, or
 // the health record.
@@ -175,9 +175,12 @@ function readCappedBody(req, limit) {
  * @param {{key: string}[]} [options.cronSeeds]  keeper keys derived from the
  *        scheduler's own job ids, stood up at boot (see lib/cronSeed.mjs)
  */
-export function createTownServer({ token, journalPath, staticRoot = null, heartbeatSeconds = 15, cronSeeds = [] }) {
+export function createTownServer({ token, journalPath, staticRoot = null, heartbeatSeconds = 15, cronSeeds = [], managementToken = null, onStop = null }) {
   if (typeof token !== 'string' || tokenStrengthBits(token) < MIN_TOKEN_BITS) {
     throw new Error('createTownServer requires a strong bridge token');
+  }
+  if (managementToken !== null && (tokenStrengthBits(managementToken) < MIN_TOKEN_BITS || secretEquals(managementToken, token))) {
+    throw new Error('Management requires a strong, separate process secret');
   }
   const state = createTownState({ journalPath });
   const seededKeepers = state.seedKeepers(cronSeeds);
@@ -193,6 +196,10 @@ export function createTownServer({ token, journalPath, staticRoot = null, heartb
   let authFailures = 0;
   let schemaFailures = 0;
   let oversized = 0;
+  // Current-boot accepted ingress only. Restored history and cron seeds are not delivery.
+  let receivedEvents = 0;
+  let lastEventAt = null;
+  const bridgeStatus = () => ({ receivedEvents, lastEventAt });
 
   function broadcast(events) {
     if (events.length === 0 || clients.size === 0) return;
@@ -213,6 +220,7 @@ export function createTownServer({ token, journalPath, staticRoot = null, heartb
     const frame = `event: heartbeat\ndata: ${JSON.stringify({
       at: Number((Date.now() / 1000).toFixed(3)),
       cursor: state.cursor,
+      bridge: bridgeStatus(),
     })}\n\n`;
     for (const client of clients) {
       try {
@@ -254,7 +262,14 @@ export function createTownServer({ token, journalPath, staticRoot = null, heartb
       return;
     }
     const result = state.ingest(parsed.events);
+    if (result.accepted > 0) {
+      receivedEvents += result.accepted;
+      lastEventAt = Date.now() / 1000;
+    }
     broadcast(result.events);
+    for (const client of clients) {
+      client.res.write(`event: bridge\ndata: ${JSON.stringify(bridgeStatus())}\n\n`);
+    }
     sendJson(res, 202, {
       ok: true,
       accepted: result.accepted,
@@ -269,7 +284,7 @@ export function createTownServer({ token, journalPath, staticRoot = null, heartb
     const requested = Number(url.searchParams.get('since') ?? NaN);
     const since = Number.isFinite(requested) && requested >= 0 ? Math.floor(requested) : null;
     const expectedStreamId = url.searchParams.get('stream');
-    sendJson(res, 200, state.snapshot(since, expectedStreamId));
+    sendJson(res, 200, { ...state.snapshot(since, expectedStreamId), bridge: bridgeStatus() });
   }
 
   function handleHealth(req, res) {
@@ -291,6 +306,7 @@ export function createTownServer({ token, journalPath, staticRoot = null, heartb
       sse: { clients: clients.size, connections: sseConnections, replayed: sseReplayed, resets: sseResets },
       auth: { failures: authFailures, schemaFailures, oversized },
       staticApp: root !== null,
+      bridge: bridgeStatus(),
     });
   }
 
@@ -315,6 +331,7 @@ export function createTownServer({ token, journalPath, staticRoot = null, heartb
       streamId: state.streamId,
       cursor: state.cursor,
       at: Number((Date.now() / 1000).toFixed(3)),
+      bridge: bridgeStatus(),
     })}\n\n`);
 
     sseConnections += 1;
@@ -382,6 +399,29 @@ export function createTownServer({ token, journalPath, staticRoot = null, heartb
 
     // No CORS headers anywhere, by design: the app and the API share an
     // origin, and a cross-origin reader has no business here.
+    if (route === '/api/town/manage' || route === '/api/town/manage/stop') {
+      if (managementToken === null) {
+        sendJson(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      const match = /^Bearer\s+(.+)$/.exec(String(req.headers.authorization ?? ''));
+      if (!match || !secretEquals(match[1].trim(), managementToken)) {
+        sendJson(res, 401, { ok: false, error: 'unauthorized' });
+        return;
+      }
+      const stopping = route.endsWith('/stop');
+      if (method !== (stopping ? 'POST' : 'GET')) {
+        sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
+        return;
+      }
+      if (stopping && typeof onStop !== 'function') {
+        sendJson(res, 409, { ok: false, error: 'not_managed' });
+        return;
+      }
+      if (stopping) res.once('finish', () => { setImmediate(() => onStop()); });
+      sendJson(res, stopping ? 202 : 200, { ok: true, service: 'hermes-town', bridge: bridgeStatus() });
+      return;
+    }
     if (route === '/api/town/ingest') {
       if (method !== 'POST') {
         sendJson(res, 405, { ok: false, error: 'method_not_allowed' });

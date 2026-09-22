@@ -13,7 +13,18 @@
       <div id="masthead">
         <div class="kicker">hermes runtime interface</div>
         <div class="title">Hermes Town</div>
-        <div id="status" class="status">starting</div>
+        <div id="status" class="status" role="status">starting</div>
+        <details id="connection-help" hidden>
+          <summary>Connect Hermes</summary>
+          <p id="connection-note"></p>
+          <ol>
+            <li>Install and enable the Hermes Town plugin.</li>
+            <li>Run <code>hermes town start</code> on the Hermes host.</li>
+            <li>Start a new Hermes CLI session, or restart your gateway, then run a turn.</li>
+          </ol>
+          <p><code>hermes town status</code> checks local setup and delivery.</p>
+          <p class="privacy-note">Only lifecycle metadata. No prompts, messages, or tool output. Keep live mode local.</p>
+        </details>
       </div>
       <div id="controls">
         <button id="overview">Town view</button>

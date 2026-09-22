@@ -118,6 +118,8 @@ try {
     staticRoot: options.staticRoot,
     heartbeatSeconds: options.heartbeatSeconds,
     cronSeeds,
+    managementToken: process.env.HERMES_TOWN_MANAGEMENT_TOKEN ?? null,
+    onStop: () => { void shutdown('launcher stop'); },
   });
   await town.listen(options.port, options.host);
 } catch (error) {
