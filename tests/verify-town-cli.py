@@ -288,6 +288,10 @@ class TownCLI(unittest.TestCase):
             # Stale identity cannot authorize a listener or cause PID signalling.
             cli.save_state(self.runtime, {**state, "pid": os.getpid()})
             with socket.socket() as unrelated:
+                # The just-stopped server leaves its closed connections in TIME_WAIT on this port;
+                # a real server sets SO_REUSEADDR, and without it this bind raced (EADDRINUSE).
+                # SO_REUSEADDR still refuses a port that has a live listener.
+                unrelated.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 unrelated.bind(("127.0.0.1", port))
                 unrelated.listen()
                 self.assertEqual(self.call("stop")[0], 4)
