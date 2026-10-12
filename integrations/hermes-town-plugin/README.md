@@ -30,6 +30,21 @@ Use `hermes -p NAME town ...` for a named profile. Runtime state, the token, bou
 
 Multiple profiles on one host need distinct ports. Set `HERMES_TOWN_BRIDGE_URL=http://127.0.0.1:PORT/api/town/ingest` in both the Town CLI and the observed Hermes process; `--port PORT` must match. An occupied port or mismatched setting is refused. Managed mode uses its profile-local token, not an external token-file override.
 
+### One shared Town for all profiles
+
+To avoid one server and port per profile, run one Town that every local profile publishes into:
+
+```bash
+hermes town setup --shared      # register default + profiles/*, create each profile's own private token
+hermes town start --shared      # one loopback server on the default port; no per-profile URL needed
+hermes town status --shared     # per-profile token, acceptance, and event counts
+hermes town profiles sync       # after creating a new profile (the server picks it up without a restart)
+hermes town profiles add NAME | remove NAME | list
+hermes town stop --shared
+```
+
+Each profile keeps using its own `hermes-town/runtime/bridge-token`, so the plugin is unchanged and the ingest wire contract gains no field. The server labels each resident with the profile whose token authenticated the request and colours its clothing by that profile. State lives in `<hermes root>/hermes-town-shared/runtime/` (registry `profiles.json`, journal, logs, management secret). Stop profile-local Towns first: they share the default port. See the repository README and `LIVE_BRIDGE.md` for the contract.
+
 A remote-host loopback URL is not your laptop's loopback URL. Use a private SSH forward; do not publish the live API. Browser opening reports when no graphical session exists.
 
 ## Diagnose connection problems

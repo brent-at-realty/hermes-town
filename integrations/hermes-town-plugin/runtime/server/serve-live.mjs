@@ -15,6 +15,7 @@ import path from 'node:path';
 
 import { createTownServer, loadToken } from './townServer.mjs';
 import { cronSeedEntries, readEnabledJobIds } from './lib/cronSeed.mjs';
+import { createProfileDirectory } from './lib/profiles.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 
@@ -39,6 +40,10 @@ function parseArgs(argv) {
     // Keepers for scheduled jobs stand at their posts from boot. On by
     // default when the scheduler's jobs file exists; --no-cron-seeds opts out.
     cronJobs: process.env.HERMES_TOWN_CRON_JOBS ?? defaultJobsPath(),
+    // Shared Town: one registry of profiles instead of one token file.
+    profiles: process.env.HERMES_TOWN_PROFILES_FILE ? path.resolve(process.env.HERMES_TOWN_PROFILES_FILE) : null,
+    explicit: new Set(),
+    noCronSeeds: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -51,16 +56,20 @@ function parseArgs(argv) {
     switch (arg) {
       case '--port': options.port = Number(value()); break;
       case '--host': options.host = value(); break;
-      case '--token-file': options.tokenFile = path.resolve(value()); break;
+      case '--token-file': options.tokenFile = path.resolve(value()); options.explicit.add(arg); break;
       case '--journal': options.journal = path.resolve(value()); break;
       case '--static': options.staticRoot = path.resolve(value()); break;
       case '--no-static': options.staticRoot = null; break;
       case '--heartbeat-seconds': options.heartbeatSeconds = Number(value()); break;
-      case '--cron-jobs': options.cronJobs = path.resolve(value()); break;
-      case '--no-cron-seeds': options.cronJobs = null; break;
+      case '--cron-jobs': options.cronJobs = path.resolve(value()); options.explicit.add(arg); break;
+      case '--no-cron-seeds': options.cronJobs = null; options.noCronSeeds = true; break;
+      case '--profiles': options.profiles = path.resolve(value()); break;
       case '--help': case '-h': options.help = true; break;
       default: throw new Error(`Unknown argument: ${arg}`);
     }
+  }
+  if (options.profiles !== null && options.explicit.size > 0) {
+    throw new Error(`--profiles takes each profile's token and jobs file from its home; it cannot be combined with ${[...options.explicit].join(' or ')}`);
   }
   if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535) {
     throw new Error(`Invalid --port: ${options.port}`);
@@ -83,6 +92,8 @@ if (options.help) {
     '  --cron-jobs PATH       Scheduler jobs file to seed keepers from',
     '                         (default $HERMES_HOME/cron/jobs.json)',
     '  --no-cron-seeds        Do not seed keepers for scheduled jobs',
+    '  --profiles PATH        Shared Town: registry of local Hermes profiles, each with its',
+    '                         own bridge token (replaces --token-file and --cron-jobs)',
   ].join('\n'));
   process.exit(0);
 }
@@ -94,33 +105,58 @@ if (options.staticRoot !== null && !fs.existsSync(options.staticRoot)) {
 
 let town;
 let cronNote = 'off';
+let profileNote = null;
 try {
-  const token = loadToken(options.tokenFile);
-  let cronSeeds = [];
-  if (options.cronJobs !== null) {
-    const jobs = readEnabledJobIds(options.cronJobs);
-    if (jobs.ok && !jobs.absent) {
-      cronSeeds = cronSeedEntries(token, jobs.ids);
-      cronNote = `${cronSeeds.length} keepers from ${options.cronJobs}`
-        + `${jobs.skipped ? `, ${jobs.skipped} entries skipped (disabled or malformed id)` : ''}`;
-    } else if (jobs.ok) {
-      cronNote = `no jobs file at ${options.cronJobs}`;
-    } else {
-      // A jobs file the town cannot parse is a silent no-op by design: the
-      // scheduler is the authority, and the town must not fail to boot or
-      // guess at entries it could not read.
-      cronNote = `jobs file unreadable (${jobs.reason})`;
-    }
-  }
-  town = createTownServer({
-    token,
+  const managementToken = process.env.HERMES_TOWN_MANAGEMENT_TOKEN ?? null;
+  const common = {
     journalPath: options.journal,
     staticRoot: options.staticRoot,
     heartbeatSeconds: options.heartbeatSeconds,
-    cronSeeds,
-    managementToken: process.env.HERMES_TOWN_MANAGEMENT_TOKEN ?? null,
+    managementToken,
     onStop: () => { void shutdown('launcher stop'); },
-  });
+  };
+  if (options.profiles !== null) {
+    const profiles = createProfileDirectory({
+      registryPath: options.profiles,
+      loadToken,
+      reservedSecrets: managementToken === null ? [] : [managementToken],
+    });
+    const registryProblem = profiles.registryProblem();
+    if (registryProblem !== null) throw new Error(`Profile registry unusable: ${registryProblem}`);
+    const loaded = profiles.list();
+    if (loaded.length === 0) {
+      const detail = profiles.problems().map((problem) => `${problem.name}: ${problem.reason}`).join('; ');
+      throw new Error(`No profile has a usable bridge token${detail ? ` (${detail})` : ''}`);
+    }
+    profileNote = `${loaded.length} profiles from ${options.profiles}: ${loaded.map((profile) => profile.name).join(', ')}`;
+    for (const problem of profiles.problems()) {
+      console.error(`profile ${problem.name} is not enabled: ${problem.reason}`);
+    }
+    if (!options.noCronSeeds) {
+      const { notes } = profiles.cronSeeds();
+      cronNote = notes.map((note) => `${note.name}: ${note.keepers}${note.reason ? ` (${note.reason})` : ''}`).join('; ');
+    }
+    town = createTownServer({ ...common, profiles, seedCron: !options.noCronSeeds });
+  } else {
+    const token = loadToken(options.tokenFile);
+    let cronSeeds = [];
+    if (options.cronJobs !== null) {
+      const jobs = readEnabledJobIds(options.cronJobs);
+      if (jobs.ok && !jobs.absent) {
+        cronSeeds = cronSeedEntries(token, jobs.ids);
+        cronNote = `${cronSeeds.length} keepers from ${options.cronJobs}`
+          + `${jobs.skipped ? `, ${jobs.skipped} entries skipped (disabled or malformed id)` : ''}`;
+      } else if (jobs.ok) {
+        cronNote = `no jobs file at ${options.cronJobs}`;
+      } else {
+        // A jobs file the town cannot parse is a silent no-op by design: the
+        // scheduler is the authority, and the town must not fail to boot or
+        // guess at entries it could not read.
+        cronNote = `jobs file unreadable (${jobs.reason})`;
+      }
+    }
+    town = createTownServer({ ...common, token, cronSeeds });
+  }
   await town.listen(options.port, options.host);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
@@ -137,6 +173,7 @@ console.log(`  snapshot       GET  ${origin}/api/town/snapshot  (public, read-on
 console.log(`  stream         GET  ${origin}/api/town/events    (public, read-only, SSE)`);
 console.log(`  health         GET  ${origin}/api/town/health`);
 console.log(`  journal        ${options.journal}`);
+if (profileNote !== null) console.log(`  shared town    ${profileNote}`);
 console.log(`  cron keepers   ${cronNote}`);
 console.log(`  restored       ${report.restored} events${report.fresh ? ' (fresh journal)' : ''}`
   + `${report.malformedLines > 0 ? `, ${report.malformedLines} malformed lines skipped` : ''}`);

@@ -64,6 +64,9 @@ export interface Resident {
   name: string;
   role: RoleClass;
   title: string | null;
+  /** Shared Town: the Hermes profile this resident belongs to, and its clothing slot. Null when unlabelled. */
+  profile: string | null;
+  profileSlot: number | null;
   home: Building;
   isChild: boolean;
   /** Remembered from earlier today: sits on the porch, was not seen live. */
@@ -115,7 +118,7 @@ export interface Resident {
 
 export interface SimEvent { at: number; text: string; residentId: string }
 
-export interface RememberedSession { agentId: string; displayName?: string; role?: RoleClass; at: number }
+export interface RememberedSession { agentId: string; displayName?: string; role?: RoleClass; at: number; profile?: string; paletteSlot?: number }
 
 export class TownSim {
   readonly residents = new Map<string, Resident>();
@@ -238,6 +241,8 @@ export class TownSim {
       if (this.residents.has(m.agentId)) continue;
       const r = this.makeResident(m.agentId, m.displayName ?? `Agent ${m.agentId.slice(-4)}`, m.role ?? 'general', 'session', null);
       r.memory = true;
+      r.profile = m.profile ?? null;
+      r.profileSlot = m.paletteSlot ?? null;
       const spot = r.home.porch.find((p) => !this.porches.has(`${p.x},${p.y}`));
       if (!spot) continue;
       this.porches.add(`${spot.x},${spot.y}`);
@@ -345,7 +350,7 @@ export class TownSim {
     const home = this.map.homes[hashString(parentId ?? id) % this.map.homes.length]!;
     const pos = tileCenter(this.map.entrance);
     return {
-      id, kind, parentId, name, role, title: null, home, isChild, memory: false, post: null,
+      id, kind, parentId, name, role, title: null, profile: null, profileSlot: null, home, isChild, memory: false, post: null,
       x: pos.x, y: pos.y, facing: 'up', anim: 'stand', style: 'desk', state: 'arriving',
       porch: null, place: null, station: null, intent: null, queue: [], path: [], pathIndex: 0,
       hold: 0, quiet: 0, done: false, failed: false, bubble: null, emote: null, emoteUntil: 0,
@@ -358,6 +363,8 @@ export class TownSim {
   private spawn(e: TownEvent): Resident {
     const r = this.makeResident(e.agentId, e.displayName ?? `Agent ${e.agentId.slice(-4)}`, e.role ?? 'general', 'session', null);
     r.title = e.title ?? null;
+    r.profile = e.profile ?? null;
+    r.profileSlot = e.paletteSlot ?? null;
     this.residents.set(r.id, r);
     if (r.role === 'scheduled') {
       // a keeper: takes a post by a lamp and stands there between runs.
@@ -403,6 +410,8 @@ export class TownSim {
     const runner = this.makeResident(`${r.id}#r${this.runnerSerial}`, label, r.role, 'runner', r.id);
     runner.x = r.x; runner.y = r.y;
     runner.title = r.title;
+    runner.profile = r.profile;
+    runner.profileSlot = r.profileSlot;
     runner.history = [{ at: this.time, text: `sent by ${r.name}` }];
     this.residents.set(runner.id, runner);
     r.runnerCount += 1;

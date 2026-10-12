@@ -1,4 +1,4 @@
-import { parseTownEvent, type EventSink, type Source, type SourceStatus } from './events';
+import { parseProfile, parseTownEvent, type EventSink, type Source, type SourceStatus } from './events';
 
 /**
  * Browser half of the live bridge. Fetches the same-origin snapshot, then
@@ -78,7 +78,7 @@ export function createLiveSource(sink: EventSink): Source {
           const rec = m as Record<string, unknown>;
           if (typeof rec.agentId !== 'string' || typeof rec.at !== 'number') return [];
           const role = typeof rec.role === 'string' ? rec.role : undefined;
-          return [{ agentId: rec.agentId, displayName: typeof rec.displayName === 'string' ? rec.displayName : undefined, role: role as never, at: rec.at }];
+          return [{ agentId: rec.agentId, displayName: typeof rec.displayName === 'string' ? rec.displayName : undefined, role: role as never, at: rec.at, ...parseProfile(rec.profile, rec.paletteSlot) }];
         });
         if (list.length > 0) sink.remember?.(list);
       }

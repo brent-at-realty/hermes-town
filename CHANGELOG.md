@@ -2,6 +2,17 @@
 
 All notable changes to Hermes Town are documented here.
 
+## Unreleased
+
+### Shared Town for every local profile
+
+- One server can accept event streams from all local Hermes profiles. `serve-live.mjs --profiles PATH` reads a registry (`hermes-town.profiles.v1`: profile names and homes) and authenticates one bearer token per profile, each read from that profile's own `hermes-town/runtime/bridge-token`. The plugin and the ingest wire contract are unchanged.
+- The server labels each resident with the profile whose token authenticated the request and publishes `profile` and `paletteSlot` on the `agent.spawned` public event (and on `recent` porch entries). The ingest schema still rejects any client-supplied `profile`. Residents are bound to the profile that spawned them: another profile's token cannot drive them, and ingress ids are namespaced per profile.
+- Each profile's enabled cron jobs seed keepers with that profile's own token and label. Profiles added to, or removed from, the registry take effect on the running server within seconds; a token two profiles share authenticates neither.
+- Residents wear a profile-specific clothing colour from a twelve-colour palette (`src/art/profileColors.ts`), allocated deterministically and collision-free in registry order, with a name-hash fallback for slots the server did not assign. A legend under the status line, the resident inspector, and the minimap show the profile.
+- Native CLI: `hermes town setup|start|status|stop|open --shared`, and `hermes town profiles list|sync|add|remove`. The shared server keeps its state in `<hermes root>/hermes-town-shared/runtime/`. Profile-local mode is unchanged.
+- Verification: `tests/verify-shared-town.mjs` (part of `test:contracts`) and `TownCLIShared` in `tests/verify-town-cli.py`.
+
 ## 0.2.0 - 2026-09-17
 
 ### Live bridge

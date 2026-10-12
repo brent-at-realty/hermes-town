@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { TILE, T } from './art/tiles';
+import { profileColorFor } from './art/profileColors';
 import { createDemoSource } from './live/demoSource';
 import { createLiveSource } from './live/liveSource';
 import type { Source } from './live/events';
@@ -95,8 +96,10 @@ function renderPanel(): void {
   panel.hidden = false;
   const place = r.place ? PLACE_LABEL[r.place] : r.state === 'leaving' ? 'going home' : r.state === 'waiting' ? 'at the front door' : r.state === 'posted' ? 'at its post' : r.state === 'returning' ? 'coming back' : 'on the road';
   const parent = r.parentId ? sim.residents.get(r.parentId) : null;
+  const colour = profileColorFor(r.profile, r.profileSlot);
   const runnersOut = r.kind === 'session' ? sim.runners().filter((x) => x.parentId === r.id).length : 0;
   const rows: [string, string][] = [
+    ...(colour && r.profile ? [['profile', `${r.profile} · ${colour.name}`] as [string, string]] : []),
     ['state', r.state === 'waiting' ? 'waiting for you' : r.state === 'posted' ? 'on watch until the next run' : r.state],
     ['where', place],
     ['doing', r.bubble ?? (r.anim === 'sit' ? 'resting' : r.anim)],
@@ -107,10 +110,38 @@ function renderPanel(): void {
   ];
   const sub = r.kind === 'runner' ? `tool call · ${r.role}` : r.role === 'scheduled' ? `scheduled job · keeper` : `${r.title ?? (r.memory ? 'earlier today' : r.isChild ? 'subagent' : 'session')} · ${r.role}`;
   panel.innerHTML = `
-    <h3>${escapeHtml(r.name)}</h3>
+    <h3>${colour ? `<span class="swatch" style="background:${colour.cloth}"></span> ` : ''}${escapeHtml(r.name)}</h3>
     <div class="sub">${escapeHtml(sub)}</div>
     ${rows.map(([k, v]) => `<div class="row"><span>${k}</span><span>${escapeHtml(v)}</span></div>`).join('')}
     <ul>${r.history.map((h) => `<li><b>${escapeHtml(h.text)}</b> <span>${ago(sim.now() - h.at)} ago</span></li>`).join('')}</ul>`;
+}
+
+/** Shared Town: one swatch per profile that has a resident in town. Hidden when nobody carries a profile. */
+function renderLegend(): void {
+  const legend = $('#legend');
+  const counts = new Map<string, { slot: number; colour: string; count: number }>();
+  for (const r of sim.residents.values()) {
+    if (r.kind !== 'session' || r.state === 'gone' || r.memory) continue;
+    const colour = profileColorFor(r.profile, r.profileSlot);
+    if (!colour || r.profile === null) continue;
+    const entry = counts.get(r.profile) ?? { slot: colour.slot, colour: colour.cloth, count: 0 };
+    entry.count += 1;
+    counts.set(r.profile, entry);
+  }
+  const signature = [...counts].map(([name, e]) => `${name}:${e.slot}:${e.count}`).sort().join('|');
+  if (legend.dataset.signature === signature) return;
+  legend.dataset.signature = signature;
+  legend.replaceChildren();
+  legend.hidden = counts.size === 0;
+  for (const [name, entry] of [...counts].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    const swatch = document.createElement('span');
+    swatch.className = 'swatch';
+    swatch.style.background = entry.colour;
+    chip.append(swatch, `${name} · ${entry.count}`);
+    legend.append(chip);
+  }
 }
 
 function escapeHtml(s: string): string {
@@ -151,6 +182,7 @@ function renderStatus(): void {
     if (st === 'disconnected') text += ' · run hermes town start on the Hermes host';
   }
   statusEl.textContent = text;
+  renderLegend();
   const verified = (source.bridge?.()?.receivedEvents ?? 0) > 0;
   statusEl.className = `status ${mode === 'demo' ? 'demo' : st === 'connected' && verified ? 'ok' : st === 'disconnected' ? 'bad' : ''}`;
   const help = $<HTMLDetailsElement>('#connection-help');
@@ -189,7 +221,8 @@ function renderMinimap(): void {
   mctx.clearRect(0, 0, minimap.width, minimap.height);
   mctx.drawImage(base, 0, 0, minimap.width, minimap.height);
   for (const r of sim.residents.values()) {
-    mctx.fillStyle = r.id === selectedId ? '#ffd36b' : r.isChild ? '#c9b58f' : '#f3e6c9';
+    const dot = profileColorFor(r.profile, r.profileSlot);
+    mctx.fillStyle = r.id === selectedId ? '#ffd36b' : dot ? dot.cloth : r.isChild ? '#c9b58f' : '#f3e6c9';
     mctx.fillRect(Math.round((r.x / TILE) * scaleX) - 1, Math.round((r.y / TILE) * scaleY) - 1, 3, 3);
   }
   if (scene) {

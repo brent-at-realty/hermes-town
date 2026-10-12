@@ -101,6 +101,32 @@ const FAILURE_REASON = Object.freeze({
   cancelled: 'cancelled',
 });
 
+/**
+ * Shared-Town profile label. It is an operator-declared configuration name
+ * (the Hermes profile directory name), never Hermes runtime data. The ingress
+ * body cannot carry it: the server attaches it from the bearer token that
+ * authenticated the request.
+ */
+export const PROFILE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/** Clothing colours the browser can draw. Mirrored by `PROFILE_PALETTE` in src/art/profileColors.ts. */
+export const PROFILE_PALETTE_SIZE = 12;
+
+/** FNV-1a, identical to `hashString` in src/art/painter.ts. */
+export function fnv1a(text) {
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+/** The deterministic palette slot a profile name prefers, before collision handling. */
+export function preferredProfileSlot(name) {
+  return fnv1a(name) % PROFILE_PALETTE_SIZE;
+}
+
 export const AGENT_KEY = /^h\/(main|child|cron)\/[0-9a-f]{16}$/;
 export const INGRESS_ID = /^[A-Za-z0-9_-]{8,64}$/;
 export const TOOL_NAME = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -132,8 +158,16 @@ export function districtFor(role) {
 export function townEventBody(ingress, role) {
   const outcome = ingress.outcome ?? null;
   switch (ingress.kind) {
-    case 'spawned':
-      return { type: 'agent.spawned', role, displayName: displayNameFor(role, ingress.key) };
+    case 'spawned': {
+      const body = { type: 'agent.spawned', role, displayName: displayNameFor(role, ingress.key) };
+      // Shared Town only. `profile` and `paletteSlot` are attached by the
+      // server from the authenticated token, never copied out of an ingress body.
+      if (typeof ingress.profile === 'string') {
+        body.profile = ingress.profile;
+        body.paletteSlot = ingress.paletteSlot;
+      }
+      return body;
+    }
     case 'assigned':
       return { type: 'agent.assigned', district: districtFor(role), action: ROLE_ACTION[role] ?? ROLE_ACTION.general };
     case 'tool_started':

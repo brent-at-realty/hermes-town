@@ -48,16 +48,39 @@ def setup_parser(parser):
     for action in ("setup", "start", "status", "stop", "open"):
         sub = commands.add_parser(action, help=f"{action.capitalize()} the profile-local town")
         sub.add_argument("--port", type=int, default=None)
+        sub.add_argument("--shared", action="store_true", dest="town_shared",
+                         help="Act on the one shared town that every local Hermes profile publishes into")
         if action == "status":
             sub.add_argument("--json", action="store_true", dest="town_json")
         if action == "start":
             sub.add_argument("--open", action="store_true", dest="town_open",
                              help="Opt in to opening a browser after readiness")
+    profiles = commands.add_parser("profiles", help="Manage which local Hermes profiles the shared town accepts")
+    actions = profiles.add_subparsers(dest="profiles_action", required=True)
+    actions.add_parser("list", help="Show registered profiles and whether each has a private token")
+    actions.add_parser("sync", help="Register every local profile (default and profiles/*) and create missing private tokens")
+    add = actions.add_parser("add", help="Register one profile and create its private token if missing")
+    add.add_argument("name")
+    add.add_argument("--home", default=None, help="Absolute Hermes home, when it is not <root>/profiles/<name>")
+    remove = actions.add_parser("remove", help="Stop accepting one profile (its token file is left alone)")
+    remove.add_argument("name")
 
 
-def settings(port=None):
+PROFILE_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+REGISTRY_VERSION = "hermes-town.profiles.v1"
+MAX_PROFILES = 64
+
+
+def hermes_root(home):
+    """The directory that holds the default profile and `profiles/<name>`."""
+    return home.parent.parent if home.parent.name == "profiles" else home
+
+
+def settings(port=None, shared=False):
     home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes").expanduser().absolute()
-    runtime = home / "hermes-town" / "runtime"
+    if shared:
+        home = hermes_root(home)
+    runtime = (home / "hermes-town-shared" if shared else home / "hermes-town") / "runtime"
     override = os.environ.get("HERMES_TOWN_BRIDGE_URL", "").strip()
     parsed = None
     if override:
@@ -80,7 +103,7 @@ def settings(port=None):
         raise TownError(f"Custom port requires HERMES_TOWN_BRIDGE_URL=http://127.0.0.1:{selected}/api/town/ingest in the observed Hermes process and this CLI environment.")
     token = runtime / "bridge-token"
     token_override = os.environ.get("HERMES_TOWN_BRIDGE_TOKEN_FILE", "").strip()
-    if token_override and Path(token_override).expanduser().absolute() != token:
+    if not shared and token_override and Path(token_override).expanduser().absolute() != token:
         raise TownError("External HERMES_TOWN_BRIDGE_TOKEN_FILE is unsupported by managed Town; unset it and use this profile's hermes-town/runtime/bridge-token.")
     return home, runtime, selected
 
@@ -269,14 +292,112 @@ def token_ready(runtime, create=False):
     return True
 
 
-def setup(runtime):
+def setup(runtime, token=True):
     if not bundle_ready():
         raise TownError("Packaged runtime missing or integrity check failed; install a Hermes Town release containing runtime/manifest.json, runtime/server and runtime/dist.", 3)
     node, reason = node_status()
     if not node:
         raise TownError(reason, 3)
-    token_ready(runtime, create=True)
+    if token:
+        token_ready(runtime, create=True)
     return node
+
+
+# -- shared town: one server, one private token per local Hermes profile -------
+
+def discover_profiles(root):
+    """The default profile plus every real directory under <root>/profiles."""
+    found = [("default", root)]
+    try:
+        names = sorted(os.listdir(root / "profiles"))
+    except OSError:
+        names = []
+    for name in names:
+        path = root / "profiles" / name
+        if PROFILE_NAME.fullmatch(name) and not path.is_symlink() and path.is_dir():
+            found.append((name, path))
+    return found
+
+
+def read_registry(runtime):
+    path = runtime / "profiles.json"
+    if not check_file(path, missing=True):
+        return []
+    try:
+        value = json.loads(private_read(path))
+        entries = value["profiles"]
+        if value.get("v") != REGISTRY_VERSION or not isinstance(entries, list) or len(entries) > MAX_PROFILES:
+            raise ValueError()
+        for entry in entries:
+            if (not isinstance(entry, dict) or set(entry) - {"name", "home", "slot"}
+                    or not PROFILE_NAME.fullmatch(str(entry.get("name", "")))
+                    or not isinstance(entry.get("home"), str) or not os.path.isabs(entry["home"])):
+                raise ValueError()
+        if len({entry["name"] for entry in entries}) != len(entries):
+            raise ValueError()
+        return entries
+    except (KeyError, ValueError, TypeError):
+        raise TownError("Invalid shared profile registry; fix or remove profiles.json in the shared runtime directory.") from None
+
+
+def write_registry(runtime, entries):
+    target = runtime / "profiles.json"
+    check_file(target, missing=True)
+    fd, name = tempfile.mkstemp(prefix=".profiles-", dir=runtime)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump({"v": REGISTRY_VERSION, "profiles": entries}, stream, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, target)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def ensure_profile_token(home):
+    """Give a profile its own private token, exactly as `hermes town setup` would there."""
+    if not home.is_dir() or home.is_symlink():
+        raise TownError(f"Profile home is not a real directory: {home.name}")
+    runtime = home / "hermes-town" / "runtime"
+    runtime_dirs(runtime, create=True, tighten=True)
+    token_ready(runtime, create=True)
+
+
+def register_profile(runtime, entries, name, home):
+    if not PROFILE_NAME.fullmatch(name):
+        raise TownError("Profile name must be lowercase letters, digits, '_' or '-' (at most 64, starting with a letter or digit).")
+    ensure_profile_token(home)
+    for entry in entries:
+        if entry["name"] == name:
+            if entry["home"] != str(home):
+                raise TownError(f"Profile {name} is already registered with a different home; remove it first.")
+            return False
+    if len(entries) >= MAX_PROFILES:
+        raise TownError(f"At most {MAX_PROFILES} profiles can share one town.")
+    entries.append({"name": name, "home": str(home)})
+    return True
+
+
+def sync_profiles(root, runtime):
+    entries = read_registry(runtime)
+    added = [name for name, home in discover_profiles(root) if register_profile(runtime, entries, name, home)]
+    write_registry(runtime, entries)
+    return entries, added
+
+
+def shared_setup(root, runtime):
+    node = setup(runtime, token=False)
+    entries, added = sync_profiles(root, runtime)
+    return node, entries, added
+
+
+def profile_token_ready(entry):
+    try:
+        return bool(token_ready(Path(entry["home"]) / "hermes-town" / "runtime"))
+    except (TownError, OSError):
+        return False
 
 
 def api(port, route, token=None, method="GET"):
@@ -358,8 +479,10 @@ def stop_owned(state):
     raise TownError("Stop requested, but endpoint still reachable; managed state retained.", 5)
 
 
-def start(home, runtime, port):
-    node = setup(runtime)
+def start(home, runtime, port, shared=False):
+    node = setup(runtime, token=not shared)
+    if shared and not read_registry(runtime):
+        raise TownError("No profiles registered for the shared town; run hermes town setup --shared (or hermes town profiles sync) first.", 3)
     state = read_state(runtime)
     if owned(state):
         if state["port"] != port:
@@ -382,8 +505,10 @@ def start(home, runtime, port):
     sink = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--_log-sink", str(runtime)], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=sink_env, **spawn_options())
     process = None
     state = {"port": port, "managementToken": management, "profile": str(home), "startedAt": time.time()}
+    credential = (["--profiles", str(runtime / "profiles.json")] if shared
+                  else ["--token-file", str(runtime / "bridge-token")])
     try:
-        process = subprocess.Popen([node, str(BUNDLE / "server/serve-live.mjs"), "--static", str(BUNDLE / "dist"), "--journal", str(runtime / "town-journal.jsonl"), "--token-file", str(runtime / "bridge-token"), "--port", str(port), "--host", "127.0.0.1"], stdin=subprocess.DEVNULL, stdout=sink.stdin, stderr=subprocess.STDOUT, env=env, cwd=str(runtime), **spawn_options())
+        process = subprocess.Popen([node, str(BUNDLE / "server/serve-live.mjs"), "--static", str(BUNDLE / "dist"), "--journal", str(runtime / "town-journal.jsonl"), *credential, "--port", str(port), "--host", "127.0.0.1"], stdin=subprocess.DEVNULL, stdout=sink.stdin, stderr=subprocess.STDOUT, env=env, cwd=str(runtime), **spawn_options())
         sink.stdin.close()
         state["pid"] = process.pid  # diagnostic only; never used for control
         deadline = time.monotonic() + TIMEOUT
@@ -473,26 +598,136 @@ def open_browser(port):
         raise TownError("No browser could be opened; use the printed local URL.", 5)
 
 
+def shared_status(root, runtime, port):
+    dirs = runtime_dirs(runtime)
+    node, reason = node_status()
+    registry_error = None
+    try:
+        entries = read_registry(runtime) if dirs else []
+    except TownError as error:
+        entries, registry_error = [], str(error)
+    state_error = None
+    try:
+        state = read_state(runtime) if dirs else None
+    except TownError as error:
+        state, state_error = None, str(error)
+    owner = owned(state) and state["port"] == port
+    health = api(port, "health")
+    manage = api(port, "manage", state["managementToken"]) if owner else None
+    served = {}
+    if manage and isinstance(manage.get("profiles"), list):
+        for item in manage["profiles"]:
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                served[item["name"]] = item
+    profiles = []
+    for entry in entries:
+        item = served.get(entry["name"])
+        count = item.get("receivedEvents") if item else None
+        profiles.append({
+            "name": entry["name"], "tokenReady": profile_token_ready(entry),
+            "loadedByServer": bool(item) if owner else None,
+            "receivedEvents": count if type(count) is int and count >= 0 else None,
+        })
+    bridge = health.get("bridge") if health and owner else None
+    total = bridge.get("receivedEvents") if isinstance(bridge, dict) else None
+    return {"url": f"http://127.0.0.1:{port}/", "shared": True, "bundleReady": bundle_ready(), "nodeReady": bool(node),
+            "nodeDiagnostic": reason, "registryDiagnostic": registry_error, "stateDiagnostic": state_error,
+            "profiles": profiles, "serverReachable": listening(port), "serverHealthy": bool(health),
+            "managedByThisHost": bool(owner), "receivedEvents": total if type(total) is int and total >= 0 else None}
+
+
+def print_shared_status(report):
+    print(f"Shared Town: {report['url']}")
+    print("Local setup: " + ", ".join(f"{name} {'ready' if ready else 'needs attention'}" for name, ready in (("bundle", report["bundleReady"]), ("Node.js", report["nodeReady"]))))
+    if report["managedByThisHost"] and report["serverHealthy"]:
+        print("Server: running, managed by this Hermes host")
+    elif report["serverReachable"]:
+        print("Server: port occupied; ownership not verified for the shared town")
+    else:
+        print("Server: not running")
+    if not report["profiles"]:
+        print("Profiles: none registered; run hermes town setup --shared")
+    for item in report["profiles"]:
+        parts = ["token ready" if item["tokenReady"] else "token needs attention"]
+        if item["loadedByServer"] is not None:
+            parts.append("accepted by server" if item["loadedByServer"] else "not yet loaded by server")
+        count = item["receivedEvents"]
+        parts.append("events: unknown" if count is None else f"events this run: {count}")
+        print(f"  {item['name']}: " + ", ".join(parts))
+    for field in ("registryDiagnostic", "stateDiagnostic"):
+        if report.get(field):
+            print(f"Check: {report[field]}")
+    if not report["nodeReady"]:
+        print(f"Check: {report['nodeDiagnostic']}")
+    if not report["serverReachable"]:
+        print("Next: hermes town start --shared")
+    elif not report["managedByThisHost"]:
+        print("Next: stop whatever else listens on that port (for example a profile-local town: hermes -p <name> town stop), then hermes town start --shared.")
+
+
+def profiles_command(root, runtime, args):
+    action = args.profiles_action
+    entries = read_registry(runtime)
+    if action == "list":
+        if not entries:
+            print("No profiles registered; run hermes town profiles sync")
+        for entry in entries:
+            print(f"{entry['name']}: token {'ready' if profile_token_ready(entry) else 'needs attention'}")
+        return
+    if action == "sync":
+        entries, added = sync_profiles(root, runtime)
+        print(f"{len(entries)} profiles registered" + (f"; added: {', '.join(added)}" if added else "; nothing new") + ". Token values are never printed.")
+        return
+    name = args.name
+    if action == "add":
+        if args.home:
+            home = Path(args.home).expanduser()
+            if not home.is_absolute():
+                raise TownError("--home must be an absolute path.")
+        else:
+            known = dict(discover_profiles(root))
+            if name not in known:
+                raise TownError(f"No profile named {name} under {root / 'profiles'}; pass --home for a Hermes home elsewhere.")
+            home = known[name]
+        changed = register_profile(runtime, entries, name, home)
+        write_registry(runtime, entries)
+        print(f"Profile {name} {'registered' if changed else 'already registered'}; its private token is ready.")
+        return
+    remaining = [entry for entry in entries if entry["name"] != name]
+    if len(remaining) == len(entries):
+        raise TownError(f"Profile {name} is not registered.")
+    write_registry(runtime, remaining)
+    print(f"Profile {name} will no longer be accepted (the running server notices within seconds). Its token file was left in place.")
+
+
 def run(args):
     try:
-        home, runtime, port = settings(getattr(args, "port", None))
         action = args.town_action
+        shared = bool(getattr(args, "town_shared", False)) or action == "profiles"
+        home, runtime, port = settings(getattr(args, "port", None), shared)
         if action == "status":
-            report = status(runtime, port)
+            report = shared_status(home, runtime, port) if shared else status(runtime, port)
             if getattr(args, "town_json", False):
                 print(json.dumps(report, sort_keys=True))
             else:
-                print_status(report)
+                (print_shared_status if shared else print_status)(report)
             return 0
-        with locked(runtime, tighten=action in ("setup", "start")):
-            if action == "setup":
-                setup(runtime)
-                print("Town bundle, Node and private token ready. Plugin enablement/loading are not inferred or changed.")
+        with locked(runtime, tighten=action in ("setup", "start", "profiles")):
+            if action == "profiles":
+                profiles_command(home, runtime, args)
+            elif action == "setup":
+                if shared:
+                    _, entries, added = shared_setup(home, runtime)
+                    print(f"Town bundle and Node ready; {len(entries)} profiles registered with private tokens"
+                          + (f" (added: {', '.join(added)})" if added else "") + ". Plugin enablement/loading are not inferred or changed.")
+                else:
+                    setup(runtime)
+                    print("Town bundle, Node and private token ready. Plugin enablement/loading are not inferred or changed.")
                 if os.name == "nt":
                     print("Windows: restrict the Hermes home's inherited ACLs to your account and trusted administrators; ACLs are not audited by this CLI.")
             elif action == "start":
-                start(home, runtime, port)
-                print(f"Town ready: http://127.0.0.1:{port}/. Run hermes town status to check first events.")
+                start(home, runtime, port, shared)
+                print(f"Town ready: http://127.0.0.1:{port}/. Run hermes town status{' --shared' if shared else ''} to check first events.")
                 if getattr(args, "town_open", False):
                     open_browser(port)
             elif action == "stop":

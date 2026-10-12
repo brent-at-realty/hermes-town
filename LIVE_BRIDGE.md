@@ -169,6 +169,49 @@ gives each skill its own market stall, labelled with the skill's name, and a
 skill call sends a runner to that stall. Without the flag, skill calls are
 plain market visits.
 
+## Shared Town: one server, every local profile
+
+`serve-live.mjs --profiles PATH` (or `hermes town start --shared`) replaces the single bridge token with a registry of local Hermes profiles. It is the multi-profile alternative to one server and port per profile. The plugin and the ingress wire contract are unchanged.
+
+```text
+profile A ── plugin ── token A ─┐
+profile B ── plugin ── token B ─┼─▶ one server ── public.v1 + profile label ──▶ browser
+profile C ── plugin ── token C ─┘   (loopback)
+```
+
+Registry (`hermes-town.profiles.v1`, owner-only, not group/world writable):
+
+```json
+{ "v": "hermes-town.profiles.v1",
+  "profiles": [ { "name": "default", "home": "/home/u/.hermes" },
+                { "name": "work", "home": "/home/u/.hermes/profiles/work", "slot": 3 } ] }
+```
+
+Only `name`, `home` and an optional `slot` are read, and an entry with any other field invalidates the registry. A profile's token is always `<home>/hermes-town/runtime/bridge-token` (the file the single-profile plugin already uses) and its scheduler jobs file is `<home>/cron/jobs.json`; neither path is configurable per entry. At most 64 profiles.
+
+**Identity.** The profile is whatever the presented token authenticates, resolved by a constant-time comparison against every profile. The server attaches it after the strict ingress schema has run, so an ingress body that carries `profile` (or `paletteSlot`) is a schema error like any other unknown field. A token held by two profiles authenticates neither; a token that is weak, loosely permissioned, missing, or equal to the management secret leaves that profile out and the others still load. Because each profile's resident keys are HMACs under its own token, the same raw session id in two profiles is two different residents.
+
+**Isolation.**
+
+- A resident belongs to the profile that spawned it. An event for its key under another profile's token is skipped and counted (`foreignKeys`), not published. A resident with no profile (an earlier single-profile journal) is adopted by the first profile that speaks for it.
+- Ingress ids are de-duplicated per profile (`<profile>/<id>`), so replaying another profile's id neither suppresses nor duplicates its events.
+- The management route authenticates only with the management secret; no profile token can read it.
+
+**Public contract additions** (`hermes-town.public.v1`, `agent.spawned` only, plus `recent` porch entries):
+
+| Field | Value |
+|---|---|
+| `profile` | `^[a-z0-9][a-z0-9_-]{0,63}$`: the Hermes profile directory name, an operator-chosen label |
+| `paletteSlot` | integer `0..11`: the clothing colour the server assigned that profile |
+
+The label is configuration, not Hermes runtime data: it is never derived from a prompt, path, session, or message, and the registry's home paths never leave the server. It is visible to anyone who can read the snapshot, which stays loopback-only. Health reports only `shared: { profiles: <count> }`; per-profile delivery counts are on the authenticated management route.
+
+**Colours.** Slots are allocated in registry order: explicit `slot` values first, then each profile at the slot its name hashes to (FNV-1a modulo twelve), moved forward to the next free slot. The result depends only on the registry's contents and order, so it is stable across restarts, appending a profile never recolours another, and up to twelve profiles are distinct. Beyond twelve, slots repeat. The browser maps a slot to one of twelve clothing colours (`src/art/profileColors.ts`), tested for a minimum perceptual distance; a resident with a profile but no usable slot falls back to the slot its name hashes to. Runners inherit their session's colour. Residents with no profile (single-profile mode, demo) keep the role-based look.
+
+**Live changes.** The server re-reads the registry and tokens every few seconds and when an unknown token presents itself (rate limited). A newly registered profile is accepted and its cron keepers stand up without a restart; a removed or re-tokened profile stops authenticating. A registry that fails to parse keeps the last good set rather than locking every profile out.
+
+**Cron keepers.** Each profile's enabled job ids seed keepers with that profile's own token, so a keeper carries the right label and the plugin's later events land on it.
+
 ## Packaged launcher (v0.3.0)
 
 The catalog package now contains `runtime/server/`, `runtime/dist/`, licenses, and a deterministic SHA-256 manifest. Once that release is catalog-pinned, install and enable it normally, then run `hermes town start`. No npm or build is needed by end users. See [README](README.md#connect-a-local-hermes-runtime) for setup and diagnostics. Release publication and the reviewed catalog pin update are separate steps.
@@ -221,7 +264,7 @@ Defaults:
 - static files: `dist/`
 - cron keepers: seeded from `$HERMES_HOME/cron/jobs.json`
 
-Server flags include `--port`, `--host`, `--token-file`, `--journal`, `--static`, `--no-static`, `--heartbeat-seconds`, `--cron-jobs PATH`, and `--no-cron-seeds`. The `--host` value is restricted to `127.0.0.1`, `localhost`, or `::1`.
+Server flags include `--port`, `--host`, `--token-file`, `--journal`, `--static`, `--no-static`, `--heartbeat-seconds`, `--cron-jobs PATH`, `--no-cron-seeds`, and `--profiles PATH` (shared Town; mutually exclusive with `--token-file` and `--cron-jobs`; see above). The `--host` value is restricted to `127.0.0.1`, `localhost`, or `::1`.
 
 ### 4. Restart the observed Hermes process
 

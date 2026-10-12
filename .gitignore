@@ -26,3 +26,6 @@ runtime/
 # Launch-video working files.
 brag-output/
 brag-src/
+
+# Local code graph (regenerated with `graphify update .`)
+graphify-out/

@@ -1,4 +1,5 @@
 import type { RoleClass } from '../art/characters';
+import { PROFILE_LABEL } from '../art/profileColors';
 
 /**
  * The normalized event the town consumes. This is exactly the shape the
@@ -31,6 +32,10 @@ export interface TownEvent {
   file?: string;
   /** The skill a skill_view names, when the plugin's opt-in is on. */
   detail?: string;
+  /** Shared Town only: the Hermes profile this resident belongs to, as the server attached it. */
+  profile?: string;
+  /** Shared Town only: the clothing slot the server assigned that profile. */
+  paletteSlot?: number;
 }
 
 const ROLES: readonly string[] = ['coordinator', 'research', 'fabrication', 'review', 'tooling', 'general', 'scheduled'];
@@ -41,6 +46,13 @@ function str(v: unknown, max: number): string | undefined {
   const t = v.trim();
   if (t.length === 0 || t.length > max) return undefined;
   return t;
+}
+
+/** A profile label and clothing slot, or neither: a half-formed pair is dropped, not guessed at. */
+export function parseProfile(profile: unknown, slot: unknown): { profile?: string; paletteSlot?: number } {
+  if (typeof profile !== 'string' || !PROFILE_LABEL.test(profile)) return {};
+  const paletteSlot = typeof slot === 'number' && Number.isInteger(slot) && slot >= 0 && slot < 256 ? slot : undefined;
+  return paletteSlot === undefined ? { profile } : { profile, paletteSlot };
 }
 
 /** Parse an untrusted payload into a TownEvent, or null. Allowlist only. */
@@ -67,6 +79,7 @@ export function parseTownEvent(raw: unknown): TownEvent | null {
     title: str(r.title, 80),
     file: str(r.file, 80),
     detail: str(r.detail, 64),
+    ...(type === 'agent.spawned' ? parseProfile(r.profile, r.paletteSlot) : {}),
   };
 }
 
@@ -77,7 +90,7 @@ export interface EventSink {
   /** Called after a full snapshot replay: residents were already here, so they need not walk in. */
   settle?(): void;
   /** Sessions from earlier today that the snapshot left out: shown resting on their porches. */
-  remember?(list: { agentId: string; displayName?: string; role?: RoleClass; at: number }[]): void;
+  remember?(list: { agentId: string; displayName?: string; role?: RoleClass; at: number; profile?: string; paletteSlot?: number }[]): void;
 }
 
 export type SourceStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
