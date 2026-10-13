@@ -168,22 +168,51 @@ function readCappedBody(req, limit) {
 
 /**
  * @param {object} options
- * @param {string} options.token            shared secret, already validated
+ * @param {string|null} options.token       single-profile shared secret, already validated
+ * @param {object|null} options.profiles    shared-Town profile directory (lib/profiles.mjs);
+ *        exactly one of `token` and `profiles`
+ * @param {boolean} [options.seedCron]      shared mode: stand up each profile's cron keepers
  * @param {string} options.journalPath      durable bounded journal
  * @param {string|null} options.staticRoot  built app to serve, or null
  * @param {number} [options.heartbeatSeconds]
  * @param {{key: string}[]} [options.cronSeeds]  keeper keys derived from the
  *        scheduler's own job ids, stood up at boot (see lib/cronSeed.mjs)
  */
-export function createTownServer({ token, journalPath, staticRoot = null, heartbeatSeconds = 15, cronSeeds = [], managementToken = null, onStop = null }) {
-  if (typeof token !== 'string' || tokenStrengthBits(token) < MIN_TOKEN_BITS) {
+export function createTownServer({
+  token = null, profiles = null, journalPath, staticRoot = null, heartbeatSeconds = 15, cronSeeds = [],
+  managementToken = null, onStop = null, profileRefreshSeconds = 5, seedCron = true,
+}) {
+  // Single-profile mode authenticates one shared secret. Shared mode takes a
+  // profile directory (lib/profiles.mjs) and authenticates one token per
+  // profile. Exactly one of the two.
+  if ((token === null) === (profiles === null)) {
+    throw new Error('createTownServer requires either a bridge token or a profile directory');
+  }
+  if (token !== null && (typeof token !== 'string' || tokenStrengthBits(token) < MIN_TOKEN_BITS)) {
     throw new Error('createTownServer requires a strong bridge token');
   }
-  if (managementToken !== null && (tokenStrengthBits(managementToken) < MIN_TOKEN_BITS || secretEquals(managementToken, token))) {
-    throw new Error('Management requires a strong, separate process secret');
+  if (managementToken !== null) {
+    const separate = token === null || !secretEquals(managementToken, token);
+    if (tokenStrengthBits(managementToken) < MIN_TOKEN_BITS || !separate) {
+      throw new Error('Management requires a strong, separate process secret');
+    }
   }
   const state = createTownState({ journalPath });
-  const seededKeepers = state.seedKeepers(cronSeeds);
+  const seededKeepers = state.seedKeepers(profiles === null || !seedCron ? cronSeeds : [...cronSeeds, ...profiles.cronSeeds().seeds]);
+  /** Accepted ingress per profile, current boot only. Shared mode. */
+  const profileStats = new Map();
+
+  /** @returns {{ok: true, profile: {name: string, slot: number} | null} | {ok: false}} */
+  function authenticate(header) {
+    const match = /^Bearer\s+(.+)$/.exec(String(header ?? ''));
+    if (!match) return { ok: false };
+    const provided = match[1].trim();
+    if (profiles === null) {
+      return secretEquals(provided, token) ? { ok: true, profile: null } : { ok: false };
+    }
+    const found = profiles.authenticate(provided);
+    return found === null ? { ok: false } : { ok: true, profile: found };
+  }
 
   const root = staticRoot === null ? null : path.resolve(staticRoot);
   const startedAt = Date.now();
@@ -215,6 +244,26 @@ export function createTownServer({ token, journalPath, staticRoot = null, heartb
     }
   }
 
+  /**
+   * Shared mode: pick up registry and token changes. A profile that appears
+   * gets its scheduler keepers stood up and announced; one that disappears
+   * simply stops authenticating.
+   */
+  function refreshProfiles(options = {}) {
+    if (profiles === null) return false;
+    const { changed, added } = profiles.refresh(options);
+    if (added.length > 0 && seedCron) {
+      const { seeds } = profiles.cronSeeds(added);
+      broadcast(state.seedKeepers(seeds));
+    }
+    return changed;
+  }
+
+  const refreshTimer = profiles === null ? null : setInterval(() => {
+    refreshProfiles({ force: true });
+  }, Math.max(1, profileRefreshSeconds) * 1000);
+  refreshTimer?.unref?.();
+
   const heartbeat = setInterval(() => {
     if (clients.size === 0) return;
     const frame = `event: heartbeat\ndata: ${JSON.stringify({
@@ -235,9 +284,15 @@ export function createTownServer({ token, journalPath, staticRoot = null, heartb
   // -- routes --------------------------------------------------------------
 
   async function handleIngest(req, res) {
-    const header = req.headers.authorization ?? '';
-    const match = /^Bearer\s+(.+)$/.exec(String(header));
-    if (!match || !secretEquals(match[1].trim(), token)) {
+    let auth = authenticate(req.headers.authorization);
+    if (!auth.ok && profiles !== null) {
+      // A profile registered a moment ago has no entry yet. One rate-limited
+      // re-read lets it in without a restart; it does not weaken the check,
+      // because the retry authenticates against the same registry.
+      refreshProfiles();
+      auth = authenticate(req.headers.authorization);
+    }
+    if (!auth.ok) {
       authFailures += 1;
       state.countRejected();
       sendJson(res, 401, { ok: false, error: 'unauthorized' });
@@ -261,10 +316,21 @@ export function createTownServer({ token, journalPath, staticRoot = null, heartb
       sendJson(res, 400, { ok: false, error: 'schema', reason: parsed.reason });
       return;
     }
-    const result = state.ingest(parsed.events);
+    // The profile is whatever the token says, attached after validation so
+    // the request body has no way to name one.
+    const stamped = auth.profile === null
+      ? parsed.events
+      : parsed.events.map((event) => ({ ...event, profile: auth.profile.name, paletteSlot: auth.profile.slot }));
+    const result = state.ingest(stamped);
     if (result.accepted > 0) {
       receivedEvents += result.accepted;
       lastEventAt = Date.now() / 1000;
+      if (auth.profile !== null) {
+        const entry = profileStats.get(auth.profile.name) ?? { receivedEvents: 0, lastEventAt: null };
+        entry.receivedEvents += result.accepted;
+        entry.lastEventAt = lastEventAt;
+        profileStats.set(auth.profile.name, entry);
+      }
     }
     broadcast(result.events);
     for (const client of clients) {
@@ -307,6 +373,9 @@ export function createTownServer({ token, journalPath, staticRoot = null, heartb
       auth: { failures: authFailures, schemaFailures, oversized },
       staticApp: root !== null,
       bridge: bridgeStatus(),
+      // Shared mode only, and a count rather than names: who is registered is
+      // already visible as residents, and this route stays free of config.
+      ...(profiles === null ? {} : { shared: { profiles: profiles.list().length } }),
     });
   }
 
@@ -419,7 +488,18 @@ export function createTownServer({ token, journalPath, staticRoot = null, heartb
         return;
       }
       if (stopping) res.once('finish', () => { setImmediate(() => onStop()); });
-      sendJson(res, stopping ? 202 : 200, { ok: true, service: 'hermes-town', bridge: bridgeStatus() });
+      sendJson(res, stopping ? 202 : 200, {
+        ok: true,
+        service: 'hermes-town',
+        bridge: bridgeStatus(),
+        // Management-authenticated detail for `hermes town status --shared`.
+        ...(profiles === null ? {} : {
+          profiles: profiles.list().map(({ name, slot }) => ({
+            name, slot, ...(profileStats.get(name) ?? { receivedEvents: 0, lastEventAt: null }),
+          })),
+          profileProblems: profiles.problems().length,
+        }),
+      });
       return;
     }
     if (route === '/api/town/ingest') {
@@ -475,6 +555,9 @@ export function createTownServer({ token, journalPath, staticRoot = null, heartb
   return {
     server,
     state,
+    /** Shared mode: the live profile directory, else null. */
+    profiles,
+    refreshProfiles,
     /** Public events the boot seed published (one spawn per new keeper). */
     seededKeepers,
     listen(port, host = '127.0.0.1') {
@@ -491,6 +574,7 @@ export function createTownServer({ token, journalPath, staticRoot = null, heartb
     },
     async close() {
       clearInterval(heartbeat);
+      if (refreshTimer !== null) clearInterval(refreshTimer);
       for (const client of clients) {
         try { client.res.end(); } catch { /* already gone */ }
       }

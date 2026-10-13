@@ -61,6 +61,7 @@ export function createTownState({ journalPath, limits = LIMITS, clock = nowSecon
   let ingested = 0;
   let duplicates = 0;
   let rejected = 0;
+  let foreignKeys = 0;
 
   // -- journal io ----------------------------------------------------------
 
@@ -82,7 +83,7 @@ export function createTownState({ journalPath, limits = LIMITS, clock = nowSecon
     // A brand-new resident is the *hottest*, not the coldest: seeding its
     // cursor at the current high-water mark is what stops the eviction pass
     // below from immediately evicting the agent it was just asked to create.
-    agent = { key, role, seq: 0, lastCursor: cursor, departed: false, spawn: null, events: [], configured: false };
+    agent = { key, role, seq: 0, lastCursor: cursor, departed: false, spawn: null, events: [], configured: false, profile: null };
     agents.set(key, agent);
     evictAgents();
     return agent;
@@ -112,6 +113,7 @@ export function createTownState({ journalPath, limits = LIMITS, clock = nowSecon
     if (event.type === 'agent.spawned') {
       agent.role = event.role;
       agent.spawn = event;
+      agent.profile = typeof event.profile === 'string' ? event.profile : agent.profile;
       agent.events = [];
       agent.departed = false;
     } else {
@@ -238,12 +240,25 @@ export function createTownState({ journalPath, limits = LIMITS, clock = nowSecon
     let duplicate = 0;
     let skipped = 0;
     for (const ingress of events) {
-      if (dedupe.has(ingress.id)) {
+      // A shared Town namespaces ingress ids by profile, so one profile can
+      // never suppress another's events by replaying an id it has seen.
+      const ingressId = typeof ingress.profile === 'string' ? `${ingress.profile}/${ingress.id}` : ingress.id;
+      if (dedupe.has(ingressId)) {
         duplicate += 1;
         duplicates += 1;
         continue;
       }
       const known = agents.get(ingress.key);
+      // A resident belongs to the profile that spawned it. Another profile's
+      // token cannot drive it. An unlabelled (single-profile) resident can be
+      // adopted by the first profile that speaks for it.
+      const owner = known?.profile ?? null;
+      if (owner !== null && owner !== (ingress.profile ?? null)) {
+        skipped += 1;
+        rejected += 1;
+        foreignKeys += 1;
+        continue;
+      }
       const role = known ? known.role : ingress.role;
       if (townEventBody(ingress, role) === null) {
         skipped += 1;
@@ -253,11 +268,12 @@ export function createTownState({ journalPath, limits = LIMITS, clock = nowSecon
       // A resident the server has never numbered cannot receive a mid-life
       // event: it is spawned first, from the role the plugin carried.
       if (!known && ingress.kind !== 'spawned') {
-        published.push(emit(`${ingress.id}~spawn`, {
+        published.push(emit(`${ingressId}~spawn`, {
           key: ingress.key, kind: 'spawned', role: ingress.role,
+          profile: ingress.profile, paletteSlot: ingress.paletteSlot,
         }, ingress.role));
       }
-      published.push(emit(ingress.id, ingress, role));
+      published.push(emit(ingressId, ingress, role));
       accepted += 1;
       ingested += 1;
     }
@@ -312,6 +328,7 @@ export function createTownState({ journalPath, limits = LIMITS, clock = nowSecon
       if (agents.has(seed.key)) continue;
       published.push(emit(`seed~cron~${seed.key}`, {
         key: seed.key, kind: 'spawned', role: 'scheduled',
+        profile: seed.profile, paletteSlot: seed.paletteSlot,
       }, 'scheduled'));
     }
     // Mark every scheduled resident with a seed entry as configured, so a
@@ -375,7 +392,10 @@ export function createTownState({ journalPath, limits = LIMITS, clock = nowSecon
           if (agent.departed) { skip.add(agent.key); omitted.departed += 1; left = true; }
           else if (now - lastEventAt > bounds.staleSeconds) { skip.add(agent.key); omitted.stale += 1; left = true; }
           if (left && agent.spawn && now - lastEventAt < 24 * 3600 && agent.key.startsWith('h/main/')) {
-            recent.push({ agentId: agent.key, displayName: agent.spawn.displayName, role: agent.role, at: lastEventAt });
+            recent.push({
+              agentId: agent.key, displayName: agent.spawn.displayName, role: agent.role, at: lastEventAt,
+              ...(typeof agent.spawn.profile === 'string' ? { profile: agent.spawn.profile, paletteSlot: agent.spawn.paletteSlot } : {}),
+            });
           }
         }
         selected = retained.filter((event) => !skip.has(event.agentId));
@@ -420,6 +440,7 @@ export function createTownState({ journalPath, limits = LIMITS, clock = nowSecon
         ingested,
         duplicates,
         rejected,
+        foreignKeys,
         dedupeTracked: dedupe.size,
       };
     },

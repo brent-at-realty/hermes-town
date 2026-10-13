@@ -96,8 +96,8 @@ export interface Look {
   belt: boolean;
 }
 
-/** A stable look from a stable id, nudged by role so jobs read at a glance. */
-export function lookFor(id: string, role: RoleClass): Look {
+/** A stable look from a stable id, nudged by role so jobs read at a glance. A profile colour, when given, replaces the role's cloth. */
+export function lookFor(id: string, role: RoleClass, profileCloth?: string): Look {
   const r = mulberry(hashString(id));
   const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(r() * arr.length)]!;
   const cloth = pick(CLOTH);
@@ -124,6 +124,7 @@ export function lookFor(id: string, role: RoleClass): Look {
   }
   look.garment = look.apron || role === 'scheduled' || role === 'coordinator' ? 'coat'
     : role === 'research' || role === 'general' ? 'tunic' : 'jacket';
+  if (profileCloth !== undefined) look.cloth = profileCloth;
   look.cloth2 = shade(look.cloth, 0.72);
   return look;
 }

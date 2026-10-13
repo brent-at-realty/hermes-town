@@ -8,6 +8,7 @@ import {
 } from '../art/characters';
 import { residentPose } from './residentAnimation';
 import { hashString } from '../art/painter';
+import { profileColorFor } from '../art/profileColors';
 import { T, TILE, paintGlow, paintShadow, paintSpark } from '../art/tiles';
 import type { Resident, TownSim } from '../sim/town';
 import type { Place } from '../sim/toolMap';
@@ -503,11 +504,13 @@ export class TownScene extends Phaser.Scene {
   // ------------------------------------------------------------ residents
 
   private makeView(r: Resident): ResidentView {
-    // Looks are bucketed so a crowd shares sprite sheets: at most 16 per role.
+    // Looks are bucketed so a crowd shares sprite sheets: at most 16 per role,
+    // times one per profile colour in a shared Town.
+    const colour = profileColorFor(r.profile, r.profileSlot);
     const bucket = `${r.role}-${hashString(r.parentId ?? r.id) % 16}`;
-    const key = `char-${bucket}`;
+    const key = colour ? `char-${bucket}-p${colour.slot}` : `char-${bucket}`;
     if (!this.textures.exists(key)) {
-      this.textures.addSpriteSheet(key, paintCharacterSheet(lookFor(bucket, r.role)) as unknown as HTMLImageElement, { frameWidth: FRAME_W * CHARACTER_SCALE, frameHeight: FRAME_H * CHARACTER_SCALE, endFrame: FRAME_COUNT - 1 });
+      this.textures.addSpriteSheet(key, paintCharacterSheet(lookFor(bucket, r.role, colour?.cloth)) as unknown as HTMLImageElement, { frameWidth: FRAME_W * CHARACTER_SCALE, frameHeight: FRAME_H * CHARACTER_SCALE, endFrame: FRAME_COUNT - 1 });
     }
     const sprite = this.add.sprite(r.x, r.y, key, idleFrame('down', 0)).setOrigin(0.5, CHARACTER_BASELINE / FRAME_H).setScale((r.kind === 'runner' ? 0.8 : 1) / CHARACTER_SCALE);
     const shadow = this.add.image(r.x, r.y, 'shadow-char').setOrigin(0.5, 0.5);

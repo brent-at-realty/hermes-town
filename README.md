@@ -67,6 +67,36 @@ hermes -p work town stop
 
 State stays under that profile's Hermes home. Multiple profiles on one host need distinct ports and matching `HERMES_TOWN_BRIDGE_URL=http://127.0.0.1:PORT/api/town/ingest` in both the observed Hermes process and the Town CLI environment. A port mismatch is refused, not silently "connected". `hermes town start --port PORT` must match that setting. Managed mode uses the profile's token; external token paths and HTTPS ingest setups remain advanced/manual deployments.
 
+### One shared Town for every local profile
+
+Instead of one server and port per profile, run a single Town that every profile on this host publishes into. Each resident wears a clothing colour that identifies its profile, and a legend under the status line lists the profiles currently in town.
+
+```bash
+# 1. Once, from any profile (or the default one): register every local profile
+#    (the default home and each <root>/profiles/<name>) and give each its own
+#    private token. Token values are never printed.
+hermes town setup --shared
+
+# 2. Install and enable the plugin in each profile you want observed
+#    (plugins are per profile; repeat with -p NAME for every one).
+hermes -p work plugins install hermes-town
+hermes -p work plugins enable hermes-town
+
+# 3. Start the one shared server (loopback, default port 4187).
+hermes town start --shared
+hermes town status --shared               # per-profile token, acceptance and event counts
+hermes town stop --shared
+```
+
+Then start a new Hermes session (or restart the gateway) in each profile. No `HERMES_TOWN_BRIDGE_URL` is needed: every profile's plugin already targets `127.0.0.1:4187` and authenticates with the token in its own `hermes-town/runtime/bridge-token`.
+
+- **Who a resident belongs to is decided by its token.** The server labels each resident with the profile whose token authenticated the request. The ingest body has no profile field, and a body that names one is rejected. One profile's token cannot drive another profile's residents, and a token shared by two profiles authenticates neither.
+- **Colours.** A profile's colour is assigned once, deterministically: the slot its name hashes to, moved forward to the next free slot in registry order, so up to twelve profiles are all distinct and adding a profile never recolours an existing one. Pin a slot with `"slot": N` in the registry. Beyond twelve profiles, colours repeat; the legend and the inspector's `profile` row still name each resident's profile.
+- **New profiles** created after `setup --shared`: run `hermes town profiles sync` (or `hermes town profiles add NAME`). The running server picks them up within seconds; no restart. `hermes town profiles remove NAME` stops accepting a profile (its token file stays). `hermes town profiles list` shows the registry.
+- **Where state lives:** `<hermes root>/hermes-town-shared/runtime/` holds `profiles.json` (names and homes only, mode 0600), the journal, logs and the management secret. Each profile keeps only its own token.
+- **Stop any profile-local Towns first.** The shared server uses the same default port as `hermes town start`; a profile-local server on that port blocks `start --shared` ("port occupied"), and a profile-local `start` is refused while the shared one runs. Profile-local mode is otherwise unchanged and still works on its own port.
+- **Existing single-profile residents are not merged:** the shared Town has its own journal, so it starts empty.
+
 Run Town **on the Hermes host**. On a remote host, the printed loopback address is remote too. Use a private SSH forward to view it locally; never expose the unauthenticated live snapshot/SSE routes through a public tunnel. Browser opening is opt-in and explains when no graphical session is available.
 
 ### What "connected" means

@@ -288,10 +288,187 @@ class TownCLI(unittest.TestCase):
             # Stale identity cannot authorize a listener or cause PID signalling.
             cli.save_state(self.runtime, {**state, "pid": os.getpid()})
             with socket.socket() as unrelated:
+                # The just-stopped server leaves its closed connections in TIME_WAIT on this port;
+                # a real server sets SO_REUSEADDR, and without it this bind raced (EADDRINUSE).
+                # SO_REUSEADDR still refuses a port that has a live listener.
+                unrelated.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 unrelated.bind(("127.0.0.1", port))
                 unrelated.listen()
                 self.assertEqual(self.call("stop")[0], 4)
                 self.assertEqual(self.call("start")[0], 4)
+        finally:
+            state = cli.read_state(self.runtime) if self.runtime.exists() else None
+            if cli.owned(state): cli.stop_owned(state)
+
+
+class TownCLIShared(unittest.TestCase):
+    """The one shared town: one server, one private token per local profile."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="town-shared-cli-test-")
+        self.root = Path(self.temp.name)
+        self.coder = self.root / "profiles" / "coder"
+        self.coder.mkdir(parents=True)
+        (self.root / "profiles" / "uat").mkdir()
+        (self.root / "profiles" / "Not_A_Label").mkdir()
+        env = {k: v for k, v in os.environ.items() if not k.startswith("HERMES_TOWN_")}
+        env["HERMES_HOME"] = str(self.coder)  # a named profile: the shared root is two levels up
+        self.env = patch.dict(os.environ, env, clear=True)
+        self.env.start()
+        self.runtime = self.root / "hermes-town-shared" / "runtime"
+
+    def tearDown(self):
+        self.env.stop()
+        self.temp.cleanup()
+
+    call = TownCLI.call
+
+    def registered(self):
+        return [entry["name"] for entry in cli.read_registry(self.runtime)]
+
+    def token(self, name):
+        home = self.root if name == "default" else self.root / "profiles" / name
+        return (home / "hermes-town/runtime/bridge-token")
+
+    def test_root_is_found_from_a_named_profile_and_from_default(self):
+        self.assertEqual(cli.settings(None, True)[0], self.root)
+        self.assertEqual(cli.settings(None, True)[1], self.runtime)
+        with patch.dict(os.environ, {"HERMES_HOME": str(self.root)}):
+            self.assertEqual(cli.settings(None, True)[0], self.root)
+        # The profile-local runtime is untouched by the shared option.
+        self.assertEqual(cli.settings(None, False)[1], self.coder / "hermes-town/runtime")
+
+    def test_sync_registers_every_profile_with_its_own_private_token(self):
+        result = self.call("profiles", "sync")
+        self.assertEqual(result[0], 0, result)
+        self.assertEqual(self.registered(), ["default", "coder", "uat"])  # invalid label skipped
+        tokens = {name: self.token(name).read_text().strip() for name in self.registered()}
+        self.assertEqual(len(set(tokens.values())), 3, "each profile has a distinct token")
+        for name, value in tokens.items():
+            self.assertNotIn(value, result[1] + result[2])
+            if os.name == "posix":
+                self.assertEqual(self.token(name).stat().st_mode & 0o777, 0o600)
+        if os.name == "posix":
+            self.assertEqual((self.runtime / "profiles.json").stat().st_mode & 0o777, 0o600)
+        # Idempotent: nothing new, and no token is rewritten.
+        again = self.call("profiles", "sync")
+        self.assertEqual(again[0], 0)
+        self.assertIn("nothing new", again[1])
+        self.assertEqual({name: self.token(name).read_text().strip() for name in self.registered()}, tokens)
+        registry = json.loads((self.runtime / "profiles.json").read_text())
+        self.assertEqual(registry["v"], "hermes-town.profiles.v1")
+        self.assertTrue(all(set(entry) == {"name", "home"} for entry in registry["profiles"]))
+
+    @unittest.skipUnless(os.name == "posix", "symlinks")
+    def test_symlinked_profile_directories_are_not_followed(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        (self.root / "profiles" / "linked").symlink_to(outside, target_is_directory=True)
+        self.assertEqual(self.call("profiles", "sync")[0], 0)
+        self.assertNotIn("linked", self.registered())
+        self.assertFalse((outside / "hermes-town").exists())
+
+    def test_add_list_remove(self):
+        self.assertEqual(self.call("profiles", "list")[0], 0)
+        self.assertEqual(self.call("profiles", "add", "uat")[0], 0)
+        self.assertEqual(self.registered(), ["uat"])
+        self.assertTrue(self.token("uat").exists())
+        self.assertFalse(self.token("coder").exists(), "adding one profile touches only that profile")
+        self.assertIn("already registered", self.call("profiles", "add", "uat")[1])
+        listed = self.call("profiles", "list")
+        self.assertIn("uat: token ready", listed[1])
+        self.assertEqual(self.call("profiles", "add", "ghost")[0], 2)
+        self.assertEqual(self.call("profiles", "add", "Bad Name", "--home", str(self.root))[0], 2)
+        self.assertEqual(self.call("profiles", "add", "elsewhere", "--home", "relative/path")[0], 2)
+        elsewhere = self.root / "elsewhere-home"
+        elsewhere.mkdir()
+        self.assertEqual(self.call("profiles", "add", "elsewhere", "--home", str(elsewhere))[0], 0)
+        self.assertEqual(self.call("profiles", "add", "elsewhere", "--home", str(self.coder))[0], 2, "a name cannot be rebound to another home")
+        token = self.token("uat").read_text()
+        self.assertEqual(self.call("profiles", "remove", "uat")[0], 0)
+        self.assertEqual(self.registered(), ["elsewhere"])
+        self.assertEqual(self.token("uat").read_text(), token, "removing a profile leaves its token file alone")
+        self.assertEqual(self.call("profiles", "remove", "uat")[0], 2)
+
+    def test_invalid_registry_is_refused(self):
+        cli.runtime_dirs(self.runtime, create=True)
+        target = self.runtime / "profiles.json"
+        for bad in ('{"v":"x","profiles":[]}', '{"v":"hermes-town.profiles.v1","profiles":[{"name":"a","home":"rel"}]}',
+                    '{"v":"hermes-town.profiles.v1","profiles":[{"name":"a","home":"/x","tokenFile":"/etc/passwd"}]}', "not json"):
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as stream:
+                stream.write(bad)
+            self.assertEqual(self.call("profiles", "list")[0], 2, bad)
+
+    def test_shared_start_needs_profiles_and_ignores_token_override(self):
+        with patch.object(cli, "bundle_ready", return_value=True), patch.object(cli, "node_status", return_value=("/node", "ready")):
+            self.assertEqual(self.call("start", "--shared")[0], 3)
+            self.assertFalse((self.runtime / "bridge-token").exists(), "the shared town has no token of its own")
+        with patch.dict(os.environ, {"HERMES_TOWN_BRIDGE_TOKEN_FILE": str(self.root / "elsewhere")}):
+            with patch.object(cli, "bundle_ready", return_value=True), patch.object(cli, "node_status", return_value=("/node", "ready")):
+                self.assertEqual(self.call("setup", "--shared")[0], 0)
+
+    def test_shared_setup_registers_all_and_reports_without_secrets(self):
+        with patch.object(cli, "bundle_ready", return_value=True), patch.object(cli, "node_status", return_value=("/node", "ready")):
+            result = self.call("setup", "--shared")
+        self.assertEqual(result[0], 0, result)
+        self.assertEqual(self.registered(), ["default", "coder", "uat"])
+        for name in self.registered():
+            self.assertNotIn(self.token(name).read_text().strip(), result[1] + result[2])
+        with patch.object(cli, "listening", return_value=False), patch.object(cli, "api", return_value=None):
+            status = self.call("status", "--shared")
+            data = json.loads(self.call("status", "--shared", "--json")[1])
+        self.assertIn("Shared Town:", status[1])
+        self.assertIn("coder: token ready", status[1])
+        self.assertIn("hermes town start --shared", status[1])
+        self.assertEqual([p["name"] for p in data["profiles"]], ["default", "coder", "uat"])
+        self.assertTrue(all(p["tokenReady"] for p in data["profiles"]))
+        self.assertTrue(data["shared"])
+
+    @unittest.skipUnless(cli.bundle_ready() and cli.node_status()[0], "packaged runtime and supported Node required")
+    def test_packaged_shared_lifecycle(self):
+        import http.client
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        os.environ["HERMES_TOWN_BRIDGE_URL"] = f"http://127.0.0.1:{port}/api/town/ingest"
+        try:
+            self.assertEqual(self.call("setup", "--shared")[0], 0)
+            result = self.call("start", "--shared")
+            self.assertEqual(result[0], 0, result)
+            state = cli.read_state(self.runtime)
+            self.assertTrue(cli.owned(state))
+            self.assertEqual(self.call("start", "--shared")[0], 0, "start is idempotent")
+            # A profile-local start must not adopt or fight the shared listener.
+            self.assertEqual(self.call("start")[0], 4)
+
+            def post(name, key):
+                connection = http.client.HTTPConnection("127.0.0.1", port)
+                payload = {"v": plugin.INGRESS_VERSION, "events": [{"id": f"synthetic_{name}_fixture", "key": key, "kind": "spawned", "role": "coordinator"}]}
+                connection.request("POST", "/api/town/ingest", json.dumps(payload), {"Content-Type": "application/json", "Authorization": "Bearer " + self.token(name).read_text().strip()})
+                response = connection.getresponse()
+                body = response.read()
+                connection.close()
+                return response.status, body
+
+            self.assertEqual(post("coder", "h/main/0123456789abcdef")[0], 202)
+            self.assertEqual(post("uat", "h/main/fedcba9876543210")[0], 202)
+            report = json.loads(self.call("status", "--shared", "--json")[1])
+            by_name = {p["name"]: p for p in report["profiles"]}
+            self.assertTrue(report["managedByThisHost"])
+            self.assertEqual(by_name["coder"]["receivedEvents"], 1)
+            self.assertEqual(by_name["uat"]["receivedEvents"], 1)
+            self.assertEqual(by_name["default"]["receivedEvents"], 0)
+            self.assertTrue(all(p["loadedByServer"] for p in report["profiles"]))
+            connection = http.client.HTTPConnection("127.0.0.1", port)
+            connection.request("GET", "/api/town/snapshot")
+            snapshot = json.loads(connection.getresponse().read())
+            connection.close()
+            labels = {e["agentId"]: e.get("profile") for e in snapshot["events"] if e["type"] == "agent.spawned"}
+            self.assertEqual(labels, {"h/main/0123456789abcdef": "coder", "h/main/fedcba9876543210": "uat"})
+            self.assertEqual(self.call("stop", "--shared")[0], 0)
+            self.assertFalse(cli.listening(port))
+            self.assertNotIn(state["managementToken"], (self.runtime / "server.log").read_text())
         finally:
             state = cli.read_state(self.runtime) if self.runtime.exists() else None
             if cli.owned(state): cli.stop_owned(state)
