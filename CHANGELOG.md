@@ -4,6 +4,16 @@ All notable changes to Hermes Town are documented here.
 
 ## Unreleased
 
+### Town Appearance
+
+- New **Appearance** drawer: theme, people kit, map, time of day, decorative weather and motion; Reset, Save as my view, Copy share link. Visual choices preview live without touching the simulator, source or bridge; a map change reloads only the renderer scene and re-reads the current snapshot.
+- Typed registries in `src/themes/` (`TownTheme`, `PeopleKit`, `MapPreset`). The original look moved unchanged into the `classic` theme, which stays the default. `night-market` (HUD palette, people, colour grade, lantern motes) and a second map, `greenwood` (same buildings, different groves and countryside), ship as the first extra entries.
+- Per-browser, versioned preference (`hermes-town.appearance`, `v: 1`), a canonical share-link query (`theme`, `people`, `map`, `time`, `weather`, `motion`), safe per-field fallback with an on-screen notice, and an operator build-time default (`VITE_DEFAULT_APPEARANCE`). No server endpoint or Hermes setting stores appearance.
+- `prefers-reduced-motion` is honoured by default with an in-drawer override. It lowers wind, cloud drift and decorative particles and drops rain streaks; residents animate as before.
+- The renderer reads one resolved appearance instead of literals: HUD and minimap palettes, label colours, tints, colour grade, haze, lamp glow, wind, clouds, fountains and motes. Prop art is a data table (`src/art/propArt.ts`) shared with map validation.
+- `buildTownMap(variant)` and `buildTownLocal(seed)` take optional parameters; the defaults are the original map.
+- Verification: `tests/verify-themes.mjs` (part of `test:contracts`) and `npm run verify:appearance` (Chromium, against the production build).
+
 ### Shared Town for every local profile
 
 - One server can accept event streams from all local Hermes profiles. `serve-live.mjs --profiles PATH` reads a registry (`hermes-town.profiles.v1`: profile names and homes) and authenticates one bearer token per profile, each read from that profile's own `hermes-town/runtime/bridge-token`. The plugin and the ingest wire contract are unchanged.
