@@ -38,6 +38,16 @@ Hermes lifecycle hooks or scripted demo
           Phaser town renderer
 ```
 
+## Viewer appearance
+
+A viewer may choose how Town looks: a theme, a people kit, a compatible map, the time of day, decorative weather and motion. This is presentation only.
+
+- A resident's place, animation, state and emote come only from allowlisted lifecycle events and the simulator, in every theme. Lighting, weather, smoke, water, cloud shadows, haze and motes are decoration and never imply work, success, failure, or a resident.
+- Appearance is client-side view state, stored per browser and shareable by URL. It is not Hermes configuration, it is not sent to Hermes or to the Town server, and the browser has no control that writes a Town-wide default. A host may set a build-time default.
+- Changing a visual setting never restarts the bridge or changes the event source. Changing the map rebuilds the renderer scene and re-reads the current snapshot; it never manufactures events.
+- `prefers-reduced-motion` is honoured by default and can be overridden in the drawer. Reduced motion lowers decoration only; residents' own movement is part of the message and is not reduced.
+- Themes, people kits and maps are typed registry entries. Nothing in a theme may load a remote or arbitrary asset.
+
 ## Non-goals
 
 Simulated social chatter, public live hosting, an economy, multiplayer, combat, infinite terrain, or direct browser access to Hermes control surfaces.

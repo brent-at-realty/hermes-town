@@ -38,7 +38,52 @@
         <button data-goto="tavern">Tavern</button>
         <button id="follow">Follow: off</button>
         <button id="director" class="on">Director: on</button>
+        <button id="appearance-toggle" aria-expanded="false" aria-controls="appearance" aria-haspopup="dialog">Appearance</button>
       </div>
+      <div id="appearance-banner" role="status" hidden></div>
+      <aside id="appearance" role="dialog" aria-modal="false" aria-labelledby="appearance-title" hidden>
+        <header>
+          <h2 id="appearance-title" tabindex="-1">Appearance</h2>
+          <button id="appearance-close" type="button" aria-label="Close appearance">×</button>
+        </header>
+        <p class="hint">Look only. Residents, places and events always come from Hermes lifecycle data; lighting, weather and motion here are decoration.</p>
+        <fieldset>
+          <legend>Theme</legend>
+          <div id="ap-themes" class="cards"></div>
+        </fieldset>
+        <label for="ap-people">People</label>
+        <select id="ap-people"></select>
+        <p class="hint" id="ap-people-hint"></p>
+        <label for="ap-map">Map</label>
+        <select id="ap-map"></select>
+        <p class="hint" id="ap-map-hint"></p>
+        <div id="ap-map-note" class="note" hidden>
+          <p>Changing the map reloads the renderer scene. Hermes and its bridge keep running; Town re-reads the current snapshot and draws the same residents. Nothing is restarted or replayed.</p>
+          <button id="ap-map-apply" type="button">Reload scene with this map</button>
+        </div>
+        <fieldset>
+          <legend>Environment</legend>
+          <label for="ap-time">Time of day</label>
+          <select id="ap-time"></select>
+          <label for="ap-weather">Weather (decoration)</label>
+          <select id="ap-weather"></select>
+          <label for="ap-motion">Motion</label>
+          <select id="ap-motion"></select>
+          <p class="hint" id="ap-motion-hint"></p>
+        </fieldset>
+        <p class="hint" id="ap-source"></p>
+        <p class="hint" id="ap-notes"></p>
+        <footer class="ap-footer">
+        <div class="actions">
+          <button id="ap-reset" type="button">Reset</button>
+          <button id="ap-save" type="button">Save as my view</button>
+          <button id="ap-copy" type="button">Copy share link</button>
+        </div>
+        <label for="ap-link">Share link</label>
+        <input id="ap-link" type="text" readonly />
+        <p id="ap-status" role="status" aria-live="polite"></p>
+        </footer>
+      </aside>
       <div id="panel" hidden></div>
       <canvas id="minimap" width="192" height="120"></canvas>
       <div id="foot">drag to pan · scroll to zoom · click a resident</div>

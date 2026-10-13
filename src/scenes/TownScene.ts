@@ -9,10 +9,14 @@ import {
 import { residentPose } from './residentAnimation';
 import { hashString } from '../art/painter';
 import { profileColorFor } from '../art/profileColors';
+import { PROP_ART, propArtKey } from '../art/propArt';
 import { T, TILE, paintGlow, paintShadow, paintSpark } from '../art/tiles';
 import type { Resident, TownSim } from '../sim/town';
 import type { Place } from '../sim/toolMap';
-import { MAP_H, MAP_W, type Building, type PropKind, type TownMap } from '../world/map';
+import type { Building, TownMap } from '../world/map';
+import { applyPeopleKit } from '../themes/people';
+import type { ResolvedAppearance } from '../themes/resolve';
+import type { MapView } from '../themes/types';
 
 const ZOOMS = [1, 1.5, 2, 3, 4, 5];
 
@@ -40,13 +44,21 @@ interface BuildingView {
 
 export interface SceneOptions {
   map: TownMap;
+  /** Overview framing for this map. */
+  view: MapView;
   sim: TownSim;
+  /** The fully resolved theme, kit, map and environment. The scene never looks a theme up by id. */
+  appearance: ResolvedAppearance;
+  /** A fixed hour from the `?hour=` debug parameter, which wins over the environment's time. */
   hour: number | null;
   onSelect: (id: string | null) => void;
 }
 
 export class TownScene extends Phaser.Scene {
   private opts!: SceneOptions;
+  private app!: ResolvedAppearance;
+  private mapW = 0;
+  private mapH = 0;
   private views = new Map<string, ResidentView>();
   private buildingViews: BuildingView[] = [];
   private night!: Phaser.GameObjects.RenderTexture;
@@ -59,6 +71,8 @@ export class TownScene extends Phaser.Scene {
   private sparks!: Phaser.GameObjects.Particles.ParticleEmitter;
   private selected: string | null = null;
   private following = false;
+  /** Re-attach the follow camera once resident sprites have been rebuilt. */
+  private refollow = false;
   /** The director picks the camera when there is little happening and nobody has touched it. */
   private director = true;
   private directorTarget: string | null = null;
@@ -70,6 +84,16 @@ export class TownScene extends Phaser.Scene {
   private cloudBlobs: { x: number; y: number; r: number; a: number }[] = [];
   private cloudClock = 0;
   private dayLights: { x: number; y: number; scale: number; tint: number; alpha: number }[] = [];
+  /** Everything the environment profile draws: rebuilt whenever the environment changes. */
+  private decor: { destroy(): void }[] = [];
+  private fountains: { x: number; y: number; foot: number }[] = [];
+  private terrainImages: Phaser.GameObjects.Image[] = [];
+  private buildingImages: Phaser.GameObjects.Image[] = [];
+  private treeImages: { img: Phaser.GameObjects.Image; variation: number }[] = [];
+  private shadows: { img: Phaser.GameObjects.Image; alpha: number }[] = [];
+  private sceneLabels: Phaser.GameObjects.Text[] = [];
+  private hazeSerial = 0;
+  private created = false;
   /** One reusable image for stamping glows into render textures. */
   private stamp!: Phaser.GameObjects.Image;
   private frameParity = 0;
@@ -78,7 +102,12 @@ export class TownScene extends Phaser.Scene {
 
   constructor() { super('town'); }
 
-  init(opts: SceneOptions): void { this.opts = opts; }
+  init(opts: SceneOptions): void {
+    this.opts = opts;
+    this.app = opts.appearance;
+    this.mapW = opts.map.grid.w;
+    this.mapH = opts.map.grid.h;
+  }
 
   preload(): void {
     for (const [key, url] of Object.entries(REFERENCE_ATLASES)) this.load.image(`reference-${key}`, url);
@@ -95,30 +124,19 @@ export class TownScene extends Phaser.Scene {
     for (const e of ['ok', 'fail', 'think', 'zzz', 'wait'] as const) add(`emote-${e}`, paintEmote(e));
 
     // Detailed sprites retain their authored feet; navigation is still in world pixels.
-    for (let i = 0; i < 6; i++) add(`art-tree${i}`, art.tree(i));
-    add('art-bush', art.bush());
-    add('art-fountain', art.prop(0, 82, 78)); add('art-chapel', art.prop(1, 76, 80));
-    add('art-marketStall0', art.prop(2, 54, 46)); add('art-marketStall1', art.prop(3, 54, 46));
-    add('art-bridge', art.prop(4, 70, 35)); add('art-rock', art.prop(5, 25, 18));
-    add('art-lamp', art.prop(6, 11, 35)); add('art-cart', art.prop(7, 32, 23));
+    // The table is data (`PROP_ART`), shared with the map validation.
+    for (const s of PROP_ART) {
+      const canvas = s.source === 'tree' ? art.tree(s.index)
+        : s.source === 'bush' ? art.bush()
+        : s.source === 'prop' ? art.prop(s.index, s.w, s.h)
+        : s.source === 'furniture' ? art.furniture(s.index, s.w, s.h)
+        : art.equipment(s.index, s.w, s.h);
+      add(`art-${s.key}`, canvas);
+    }
 
-    const furniture: [string, number, number, number?][] = [
-      ['bench', 0, 24, 16], ['porchBench', 0, 18, 12], ['flowerBox', 1, 25, 16], ['planter', 1, 22, 15],
-      ['barrel', 2, 16, 15], ['crate', 3, 18, 17], ['noticeBoard', 4, 26, 30], ['signpost', 5, 19, 27],
-      ['grave0', 6, 17, 22], ['grave1', 7, 15, 23], ['grave2', 6, 14, 19], ['banner', 15, 17, 35],
-    ];
-    for (const [key, index, w, h] of furniture) add(`art-${key}`, art.furniture(index, w, h));
-    const equipment: [string, number, number, number][] = [
-      ['anvil', 0, 19, 17], ['workbench', 1, 25, 18], ['lectern', 2, 17, 21],
-      ['telescope', 3, 23, 27], ['postbox', 4, 13, 21], ['desk', 5, 24, 18], ['stall', 6, 24, 17],
-    ];
-    for (const [key, index, w, h] of equipment) add(`art-${key}`, art.equipment(index, w, h));
-    add('art-hedge', art.bush());
-    add('art-dock', art.prop(4, 30, 18));
-
-    this.add.image(0, 0, 'terrain').setOrigin(0, 0).setScale(0.5).setDepth(-11);
+    this.terrainImages.push(this.add.image(0, 0, 'terrain').setOrigin(0, 0).setScale(0.5).setDepth(-11));
     add('structures', paintStructures(map, art));
-    this.add.image(0, 0, 'structures').setOrigin(0, 0).setScale(0.5).setDepth(-2);
+    this.terrainImages.push(this.add.image(0, 0, 'structures').setOrigin(0, 0).setScale(0.5).setDepth(-2));
 
     // buildings
     for (const b of [...map.buildings, ...map.homes]) {
@@ -128,13 +146,16 @@ export class TownScene extends Phaser.Scene {
       add(litKey, lit); add(darkKey, dark);
       const baseY = (b.y + b.h) * TILE;
       // a soft pool of shadow under the wall, never a box
-      this.add.image((b.x + b.w / 2) * TILE, baseY + 2, 'shadow-tree').setScale((b.w * TILE) / 22, 1.1).setDepth(-5).setAlpha(0.35);
+      this.shadow(this.add.image((b.x + b.w / 2) * TILE, baseY + 2, 'shadow-tree').setScale((b.w * TILE) / 22, 1.1).setDepth(-5), 0.35);
       if (b.kind === 'forge') this.dayLights.push({ x: (b.x + b.w / 2) * TILE, y: baseY + 6, scale: 1.1, tint: 0xf28b3c, alpha: 0.35 });
       else if (b.kind === 'tavern') this.dayLights.push({ x: (b.x + b.w / 2) * TILE, y: baseY + 4, scale: 0.9, tint: 0xf2c063, alpha: 0.22 });
       else if (b.kind === 'house') this.dayLights.push({ x: (b.x + b.w / 2) * TILE, y: baseY - 6, scale: 0.5, tint: 0xf6c15a, alpha: 0.12 });
       else this.dayLights.push({ x: (b.x + b.w / 2) * TILE, y: baseY - 4, scale: 0.8, tint: 0xf6c15a, alpha: 0.14 });
       const image = this.add.image(b.x * TILE - 3, baseY, darkKey).setOrigin(0, 1).setScale(0.5).setDepth(baseY - 4);
+      this.buildingImages.push(image);
       let smoke: Phaser.GameObjects.Particles.ParticleEmitter | null = null;
+      // Workplace smoke follows the simulator's activity for that building (see update);
+      // it is lifecycle-derived, so neither a theme nor reduced motion alters it.
       if (b.kind === 'forge' || b.kind === 'workshop' || b.kind === 'tavern') {
         const cx = (b.x + b.w) * TILE - (b.kind === 'forge' ? 8 : 11);
         const cy = baseY - lit.height / 2 + (b.kind === 'forge' ? 0 : 4);
@@ -146,15 +167,15 @@ export class TownScene extends Phaser.Scene {
       }
       this.buildingViews.push({ building: b, image, litKey, darkKey, lit: false, smoke, glowX: (b.x + b.w / 2) * TILE, glowY: baseY - 10 });
       if (b.kind !== 'house') {
-        this.add.text((b.x + b.w / 2) * TILE, baseY + 3, b.label, { fontFamily: 'monospace', fontSize: '6px', color: '#e9dfc8', backgroundColor: 'rgba(20,17,26,0.7)', padding: { x: 2, y: 1 } })
-          .setOrigin(0.5, 0).setResolution(6).setDepth(100000).setAlpha(0.9);
+        this.sceneLabels.push(this.add.text((b.x + b.w / 2) * TILE, baseY + 3, b.label, { fontFamily: 'monospace', fontSize: '6px', color: this.app.ui.scene.label, backgroundColor: this.app.ui.scene.labelBackground, padding: { x: 2, y: 1 } })
+          .setOrigin(0.5, 0).setResolution(6).setDepth(100000).setAlpha(0.9));
       }
     }
 
     // Every visible environment prop comes from the same atlas family.
     // The map catalog removes unsupported props before collision construction.
     for (const placed of map.props) {
-      const key = `art-${propKey(placed.kind, placed.variant ?? 0)}`;
+      const key = `art-${propArtKey(placed.kind, placed.variant ?? 0)}`;
       const src = tex.get(key).getSourceImage();
       const h = src.height / 2, w = src.width / 2;
       const [oldW, oldH] = placed.kind === 'tree' ? TREE_ANCHORS[(placed.variant ?? 0) % 6]! : PROP_ANCHORS[placed.kind]!;
@@ -162,10 +183,10 @@ export class TownScene extends Phaser.Scene {
       const img = this.add.image(x, foot, key).setOrigin(0.5, 1).setScale(0.5).setDepth(foot - (placed.kind === 'tree' ? 6 : 2));
       const variation = hashString(`${placed.x},${placed.y}`);
       if (placed.kind === 'tree') {
-        img.setTint([0xe2ebe1, 0xc4d9d1, 0xe2dfb9, 0xd2e3d0][variation % 4]!);
         img.setFlipX(variation % 3 === 0);
+        this.treeImages.push({ img, variation });
         this.swaying.push({ obj: img, phase: variation % 100 / 100, amount: 0.008 });
-        this.add.image(x - 5, foot - 4, 'shadow-tree').setScale(w / 23, 1.5).setDepth(-4).setAlpha(0.65);
+        this.shadow(this.add.image(x - 5, foot - 4, 'shadow-tree').setScale(w / 23, 1.5).setDepth(-4), 0.65);
       } else if (placed.kind === 'bush' || placed.kind === 'hedge' || placed.kind === 'banner') {
         this.swaying.push({ obj: img, phase: variation % 100 / 100, amount: placed.kind === 'banner' ? 0.025 : 0.015 });
       }
@@ -173,31 +194,26 @@ export class TownScene extends Phaser.Scene {
         this.lampPositions.push({ x, y: foot - h + 8 });
         this.dayLights.push({ x, y: foot, scale: 0.85, tint: 0xf2c063, alpha: 0.3 });
       }
-      if (placed.kind === 'fountain') {
-        this.add.particles(x, foot - h * 0.33, 'spark', {
-          speedX: { min: -9, max: 9 }, speedY: { min: -10, max: -4 }, gravityY: 20,
-          lifespan: 600, frequency: 160, scale: { start: 0.35, end: 0.1 },
-          alpha: { start: 0.7, end: 0 }, tint: [0xa9d0d1, 0xe5e9d7],
-        }).setDepth(foot + 1);
-      }
+      if (placed.kind === 'fountain') this.fountains.push({ x, y: foot - h * 0.33, foot });
       if (placed.kind === 'fountain' || placed.kind === 'chapel' || placed.kind === 'cart' || placed.kind.startsWith('marketStall')) {
-        this.add.image(x, foot - 2, 'shadow-tree').setScale(w / 22, 0.9).setDepth(-3).setAlpha(0.3);
+        this.shadow(this.add.image(x, foot - 2, 'shadow-tree').setScale(w / 22, 0.9).setDepth(-3), 0.3);
       }
     }
 
     // One complete bridge per crossing, instead of tiled plank ladders.
     const bridgeTiles = new Set<number>();
-    for (let y = 0; y < MAP_H; y++) for (let x = 0; x < MAP_W; x++) {
-      if (map.ground[y]![x] !== T.bridge || bridgeTiles.has(y * MAP_W + x)) continue;
+    const MW = this.mapW, MH = this.mapH;
+    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+      if (map.ground[y]![x] !== T.bridge || bridgeTiles.has(y * MW + x)) continue;
       const pending = [{ x, y }];
       let left = x, right = x, top = y, bottom = y;
-      bridgeTiles.add(y * MAP_W + x);
+      bridgeTiles.add(y * MW + x);
       for (let i = 0; i < pending.length; i++) {
         const cell = pending[i]!;
         left = Math.min(left, cell.x); right = Math.max(right, cell.x);
         top = Math.min(top, cell.y); bottom = Math.max(bottom, cell.y);
         for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-          const nx = cell.x + dx!, ny = cell.y + dy!, key = ny * MAP_W + nx;
+          const nx = cell.x + dx!, ny = cell.y + dy!, key = ny * MW + nx;
           if (map.ground[ny]?.[nx] !== T.bridge || bridgeTiles.has(key)) continue;
           bridgeTiles.add(key); pending.push({ x: nx, y: ny });
         }
@@ -205,54 +221,31 @@ export class TownScene extends Phaser.Scene {
       this.add.image((left - 0.65) * TILE, (top - 0.45) * TILE, 'art-bridge').setOrigin(0, 0)
         .setDisplaySize((right - left + 2.3) * TILE, (bottom - top + 1.8) * TILE).setDepth(-1);
     }
-    for (const c of map.idleSmoke ?? []) {
-      this.add.particles(c.x, c.y, 'spark', {
-        speedY: { min: -6, max: -10 }, speedX: { min: -2, max: 3 }, lifespan: 3200,
-        scale: { start: 0.8, end: 2.4 }, alpha: { start: 0.3, end: 0 }, tint: 0xa9a9ae, frequency: 700, quantity: 1,
-      }).setDepth(c.y + 200);
-    }
 
     this.sparks = this.add.particles(0, 0, 'spark', {
       speed: { min: 20, max: 50 }, angle: { min: 200, max: 340 }, gravityY: 120, lifespan: { min: 250, max: 500 },
       scale: { start: 0.8, end: 0.2 }, tint: [0xffd36b, 0xf28b3c, 0xffffff], emitting: false, quantity: 3,
     }).setDepth(99999);
 
-    for (const l of this.dayLights) {
-      this.add.image(l.x, l.y, 'glow').setScale(l.scale, l.scale * 0.55).setTint(l.tint).setAlpha(l.alpha).setBlendMode(Phaser.BlendModes.ADD).setDepth(-2);
-    }
-    // golden grade: the whole world sits in warm late light
-    this.add.rectangle(0, 0, MAP_W * TILE, MAP_H * TILE, 0xf6dfb4, 1).setOrigin(0, 0).setBlendMode(Phaser.BlendModes.MULTIPLY).setDepth(197500).setAlpha(0.3);
-    this.add.rectangle(0, 0, MAP_W * TILE, MAP_H * TILE, 0xffc070, 1).setOrigin(0, 0).setBlendMode(Phaser.BlendModes.ADD).setDepth(197501).setAlpha(0.015);
     this.stamp = this.make.image({ key: 'glow', add: false });
-    this.night = this.add.renderTexture(0, 0, MAP_W * TILE, MAP_H * TILE).setOrigin(0, 0).setDepth(200000);
+    this.night = this.add.renderTexture(0, 0, MW * TILE, MH * TILE).setOrigin(0, 0).setDepth(200000);
     this.night.setBlendMode(Phaser.BlendModes.MULTIPLY);
     // cloud shadows: broad soft patches drifting with the wind
-    this.clouds = this.add.renderTexture(0, 0, MAP_W * TILE, MAP_H * TILE).setOrigin(0, 0).setDepth(199000);
+    this.clouds = this.add.renderTexture(0, 0, MW * TILE, MH * TILE).setOrigin(0, 0).setDepth(199000);
     this.clouds.setBlendMode(Phaser.BlendModes.MULTIPLY);
-    for (let i = 0; i < 7; i++) {
-      this.cloudBlobs.push({ x: Math.random() * MAP_W * TILE, y: Math.random() * MAP_H * TILE, r: 3.5 + Math.random() * 3, a: 0.16 + Math.random() * 0.12 });
-    }
-    // edge haze: the far countryside softens toward the world's edge
-    const hazeKey = 'haze';
-    const hz = document.createElement('canvas');
-    hz.width = 256; hz.height = 256;
-    const hctx = hz.getContext('2d')!;
-    const grad = hctx.createRadialGradient(128, 128, 40, 128, 128, 150);
-    grad.addColorStop(0, 'rgba(178,190,200,0)');
-    grad.addColorStop(0.75, 'rgba(178,190,200,0.18)');
-    grad.addColorStop(1, 'rgba(178,190,200,0.55)');
-    hctx.fillStyle = grad; hctx.fillRect(0, 0, 256, 256);
-    tex.addCanvas(hazeKey, hz);
-    this.add.image(0, 0, hazeKey).setOrigin(0, 0).setDisplaySize(MAP_W * TILE, MAP_H * TILE).setDepth(198000).setAlpha(0.22);
+    this.buildDecor();
+    this.paintTheme();
 
     // camera
     const cam = this.cameras.main;
-    cam.setBounds(0, 0, MAP_W * TILE, MAP_H * TILE);
+    cam.setBounds(0, 0, MW * TILE, MH * TILE);
+    cam.setBackgroundColor(this.app.ui.canvasBackground);
     cam.setZoom(ZOOMS[this.zoomIndex]!);
     cam.setRoundPixels(true);
     this.scale.on('resize', () => this.recenter());
     this.recenter();
     for (const key of Object.keys(REFERENCE_ATLASES)) tex.remove(`reference-${key}`);
+    this.created = true;
 
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       this.dragging = true; this.dragMoved = false;
@@ -290,6 +283,126 @@ export class TownScene extends Phaser.Scene {
     });
   }
 
+  private shadow(img: Phaser.GameObjects.Image, alpha: number): void {
+    this.shadows.push({ img, alpha });
+    img.setAlpha(alpha * this.app.art.shadow);
+  }
+
+  // ------------------------------------------------------------ appearance
+
+  appearance(): ResolvedAppearance { return this.app; }
+
+  /**
+   * Apply a new look to the running scene. Presentation only: it does not
+   * touch the simulator, the source, the resident list or the camera
+   * (unless resident sprites have to be rebuilt, in which case follow is
+   * re-attached). The map must be the one this scene was created with.
+   */
+  applyAppearance(next: ResolvedAppearance): void {
+    const previous = this.app;
+    this.app = next;
+    if (!this.created) return; // create() will read the latest look when it runs
+    this.cameras.main.setBackgroundColor(next.ui.canvasBackground);
+    this.paintTheme();
+    this.buildDecor();
+    if (previous.people !== next.people || previous.ui !== next.ui) this.rebuildResidentViews(previous.people.textureTag !== next.people.textureTag);
+  }
+
+  /** Tints, shadows and label colours: everything that is a property of the static scene. */
+  private paintTheme(): void {
+    const { art, ui } = this.app;
+    for (const img of this.terrainImages) img.setTint(art.worldTint);
+    for (const img of this.buildingImages) img.setTint(art.buildingTint);
+    for (const t of this.treeImages) t.img.setTint(art.treeTints[t.variation % art.treeTints.length]!);
+    for (const s of this.shadows) s.img.setAlpha(s.alpha * art.shadow);
+    for (const label of this.sceneLabels) label.setColor(ui.scene.label).setBackgroundColor(ui.scene.labelBackground);
+    for (const label of this.stallLabels.values()) label.setColor(ui.scene.stallLabel).setBackgroundColor(ui.scene.labelBackground);
+  }
+
+  private rebuildResidentViews(dropSheets: boolean): void {
+    this.refollow = this.following;
+    for (const v of this.views.values()) { v.sprite.destroy(); v.shadow.destroy(); v.name.destroy(); v.bubble.destroy(); v.bubbleBg.destroy(); v.emote.destroy(); }
+    this.views.clear();
+    this.cameras.main.stopFollow();
+    this.directorTarget = null;
+    if (dropSheets) for (const key of this.textures.getTextureKeys()) if (key.startsWith('char-')) this.textures.remove(key);
+  }
+
+  /**
+   * Rebuild every decorative object the environment profile controls. These
+   * are lighting, wind, water, cloud, haze and mote effects: none of them
+   * reads the simulator, and none represents a resident or an event.
+   */
+  private buildDecor(): void {
+    for (const d of this.decor) d.destroy();
+    this.decor = [];
+    const env = this.app.environment;
+    const keep = <O extends { destroy(): void }>(o: O): O => { this.decor.push(o); return o; };
+    const rate = Math.max(0.05, env.particleRate);
+
+    for (const l of this.dayLights) {
+      keep(this.add.image(l.x, l.y, 'glow').setScale(l.scale, l.scale * 0.55).setTint(l.tint).setAlpha(Math.min(1, l.alpha * env.lampGlow)).setBlendMode(Phaser.BlendModes.ADD).setDepth(-2));
+    }
+    // the colour grade over the whole world
+    const g = env.grade;
+    keep(this.add.rectangle(0, 0, this.mapW * TILE, this.mapH * TILE, g.multiplyColor, 1).setOrigin(0, 0).setBlendMode(Phaser.BlendModes.MULTIPLY).setDepth(197500).setAlpha(g.multiplyAlpha));
+    keep(this.add.rectangle(0, 0, this.mapW * TILE, this.mapH * TILE, g.addColor, 1).setOrigin(0, 0).setBlendMode(Phaser.BlendModes.ADD).setDepth(197501).setAlpha(g.addAlpha));
+
+    // edge haze: the far countryside softens toward the world's edge
+    const hazeKey = `haze-${this.hazeSerial++}`;
+    const hz = document.createElement('canvas');
+    hz.width = 256; hz.height = 256;
+    const hctx = hz.getContext('2d')!;
+    const [hr, hg, hb] = env.hazeColor;
+    const grad = hctx.createRadialGradient(128, 128, 40, 128, 128, 150);
+    grad.addColorStop(0, `rgba(${hr},${hg},${hb},0)`);
+    grad.addColorStop(0.75, `rgba(${hr},${hg},${hb},0.18)`);
+    grad.addColorStop(1, `rgba(${hr},${hg},${hb},0.55)`);
+    hctx.fillStyle = grad; hctx.fillRect(0, 0, 256, 256);
+    this.textures.addCanvas(hazeKey, hz);
+    keep(this.add.image(0, 0, hazeKey).setOrigin(0, 0).setDisplaySize(this.mapW * TILE, this.mapH * TILE).setDepth(198000).setAlpha(env.hazeAlpha));
+    this.decor.push({ destroy: () => { this.textures.remove(hazeKey); } });
+
+    if (env.fountain) {
+      for (const f of this.fountains) {
+        keep(this.add.particles(f.x, f.y, 'spark', {
+          speedX: { min: -9, max: 9 }, speedY: { min: -10, max: -4 }, gravityY: 20,
+          lifespan: 600, frequency: 160 / rate, scale: { start: 0.35, end: 0.1 },
+          alpha: { start: 0.7, end: 0 }, tint: [0xa9d0d1, 0xe5e9d7],
+        }).setDepth(f.foot + 1));
+      }
+    }
+    if (env.idleSmoke) {
+      for (const c of this.opts.map.idleSmoke ?? []) {
+        keep(this.add.particles(c.x, c.y, 'spark', {
+          speedY: { min: -6, max: -10 }, speedX: { min: -2, max: 3 }, lifespan: 3200,
+          scale: { start: 0.8, end: 2.4 }, alpha: { start: 0.3, end: 0 }, tint: 0xa9a9ae, frequency: 700 / rate, quantity: 1,
+        }).setDepth(c.y + 200));
+      }
+    }
+
+    const v = this.opts.view;
+    const zone = new Phaser.Geom.Rectangle((v.centerX - v.fitW / 2) * TILE, (v.centerY - v.fitH / 2) * TILE, v.fitW * TILE, v.fitH * TILE);
+    const emitZone = { type: 'random', source: zone, quantity: 1 } as Phaser.Types.GameObjects.Particles.ParticleEmitterRandomZoneConfig;
+    if (env.rain) {
+      keep(this.add.particles(0, 0, 'spark', {
+        emitZone, speedY: { min: 150, max: 190 }, speedX: -30, lifespan: 450, frequency: 10,
+        scaleX: 0.35, scaleY: 2.4, alpha: { start: 0.35, end: 0.1 }, tint: 0xbfd0e6,
+      }).setDepth(198500));
+    }
+    if (env.motes) {
+      keep(this.add.particles(0, 0, 'spark', {
+        emitZone, speedX: { min: -4, max: 4 }, speedY: { min: -7, max: -2 }, lifespan: 7000,
+        frequency: 7000 / env.motes.count, scale: { start: 0.5, end: 0.2 },
+        alpha: { start: env.motes.alpha, end: 0 }, tint: env.motes.color, blendMode: Phaser.BlendModes.ADD,
+      }).setDepth(198500));
+    }
+
+    // cloud shadows follow the profile's count; blobs are decorative texture, not weather the town reports
+    while (this.cloudBlobs.length > env.cloudCount) this.cloudBlobs.pop();
+    while (this.cloudBlobs.length < env.cloudCount) this.cloudBlobs.push({ x: Math.random() * this.mapW * TILE, y: Math.random() * this.mapH * TILE, r: 3.5 + Math.random() * 3, a: 0.16 + Math.random() * 0.12 });
+  }
+
   private recenter(): void {
     if (this.userMoved) return;
     this.overview();
@@ -303,10 +416,11 @@ export class TownScene extends Phaser.Scene {
     this.userTouchedAt = this.sceneClock;
     this.directorTarget = null;
     const cam = this.cameras.main;
+    const v = this.opts.view;
     this.tweens.killTweensOf(cam);
     cam.panEffect.reset();
-    cam.setZoom(Math.min(cam.width / (90 * TILE), cam.height / (50 * TILE)));
-    cam.centerOn(52 * TILE, 40 * TILE);
+    cam.setZoom(Math.min(cam.width / (v.fitW * TILE), cam.height / (v.fitH * TILE)));
+    cam.centerOn(v.centerX * TILE, v.centerY * TILE);
   }
 
   select(id: string | null): void {
@@ -422,6 +536,7 @@ export class TownScene extends Phaser.Scene {
       if (this.selected === id) this.select(null);
       if (this.directorTarget === id) { this.directorTarget = null; this.cameras.main.stopFollow(); }
     }
+    if (this.refollow) { this.refollow = false; if (this.following && this.selected && this.views.has(this.selected)) this.setFollow(true); }
     this.direct();
 
     const dark = this.darkness();
@@ -445,34 +560,37 @@ export class TownScene extends Phaser.Scene {
   /** One coherent wave travelling across the whole world, sampled per tile. */
   private updateWind(dt: number): void {
     this.windClock += dt;
+    const sway = this.app.environment.windSway;
     // trees and bushes: slow, heavy
     for (const s of this.swaying) {
-      s.obj.setRotation(Math.sin(this.windClock * 1.1 + s.phase * 6.28 + s.obj.x * 0.004) * s.amount);
+      s.obj.setRotation(Math.sin(this.windClock * 1.1 + s.phase * 6.28 + s.obj.x * 0.004) * s.amount * sway);
     }
   }
 
   private drawClouds(dt: number): void {
+    const env = this.app.environment;
     this.cloudClock += dt;
     const cam = this.cameras.main.worldView;
     this.clouds.clear();
     this.clouds.fill(0xffffff, 1, cam.x - 8, cam.y - 8, cam.width + 16, cam.height + 16);
     const d = this.darkness();
     const strength = 1 - d * 0.7;
+    const W = this.mapW * TILE, H = this.mapH * TILE;
     for (const b of this.cloudBlobs) {
-      b.x += dt * 5.5; b.y += dt * 2.2;
-      if (b.x > MAP_W * TILE + 300) b.x = -300;
-      if (b.y > MAP_H * TILE + 300) b.y = -300;
+      b.x += dt * 5.5 * env.cloudDrift; b.y += dt * 2.2 * env.cloudDrift;
+      if (b.x > W + 300) b.x = -300;
+      if (b.y > H + 300) b.y = -300;
       if (b.x < cam.x - 400 || b.x > cam.right + 400 || b.y < cam.y - 400 || b.y > cam.bottom + 400) continue;
-      this.stamp.setBlendMode(Phaser.BlendModes.NORMAL).setTint(0x2a3040).setPosition(b.x, b.y).setScale(b.r, b.r * 0.6).setAlpha(b.a * strength);
+      this.stamp.setBlendMode(Phaser.BlendModes.NORMAL).setTint(0x2a3040).setPosition(b.x, b.y).setScale(b.r, b.r * 0.6).setAlpha(b.a * strength * env.cloudAlpha);
       this.clouds.draw(this.stamp);
     }
     // sunlit rises: a faint warm lift where the ground is high
     if (d < 0.5) {
       const h = this.opts.map.height;
       const step = 4;
-      for (let ty = Math.max(0, Math.floor(cam.y / TILE / step) * step); ty < Math.min(MAP_H, cam.bottom / TILE + step); ty += step) {
-        for (let tx = Math.max(0, Math.floor(cam.x / TILE / step) * step); tx < Math.min(MAP_W, cam.right / TILE + step); tx += step) {
-          const v = h[ty * MAP_W + tx]!;
+      for (let ty = Math.max(0, Math.floor(cam.y / TILE / step) * step); ty < Math.min(this.mapH, cam.bottom / TILE + step); ty += step) {
+        for (let tx = Math.max(0, Math.floor(cam.x / TILE / step) * step); tx < Math.min(this.mapW, cam.right / TILE + step); tx += step) {
+          const v = h[ty * this.mapW + tx]!;
           if (v < 0.6) continue;
           this.stamp.setBlendMode(Phaser.BlendModes.ADD).setTint(0xffe2a8).setPosition(tx * TILE + step * 8, ty * TILE + step * 8).setScale(1.6).setAlpha((v - 0.6) * 0.35 * (1 - d));
           this.clouds.draw(this.stamp);
@@ -491,7 +609,7 @@ export class TownScene extends Phaser.Scene {
       const station = this.opts.map.stations.find((s) => s.id === stationId);
       if (!station) continue;
       if (!label) {
-        label = this.add.text(station.prop.x + 12, station.prop.y - 16, '', { fontFamily: 'monospace', fontSize: '6px', color: '#f3e6c9', backgroundColor: 'rgba(20,17,26,0.7)', padding: { x: 2, y: 1 } })
+        label = this.add.text(station.prop.x + 12, station.prop.y - 16, '', { fontFamily: 'monospace', fontSize: '6px', color: this.app.ui.scene.stallLabel, backgroundColor: this.app.ui.scene.labelBackground, padding: { x: 2, y: 1 } })
           .setOrigin(0.5, 1).setResolution(6).setDepth(100001).setAlpha(0.95);
         this.stallLabels.set(stationId, label);
       }
@@ -505,18 +623,22 @@ export class TownScene extends Phaser.Scene {
 
   private makeView(r: Resident): ResidentView {
     // Looks are bucketed so a crowd shares sprite sheets: at most 16 per role,
-    // times one per profile colour in a shared Town.
+    // times one per profile colour in a shared Town, times one per people kit.
+    // The kit restyles the figure; the profile colour is applied last and always survives.
     const colour = profileColorFor(r.profile, r.profileSlot);
+    const kit = this.app.people;
     const bucket = `${r.role}-${hashString(r.parentId ?? r.id) % 16}`;
-    const key = colour ? `char-${bucket}-p${colour.slot}` : `char-${bucket}`;
+    const key = `char-${bucket}${colour ? `-p${colour.slot}` : ''}${kit.textureTag ? `-${kit.textureTag}` : ''}`;
     if (!this.textures.exists(key)) {
-      this.textures.addSpriteSheet(key, paintCharacterSheet(lookFor(bucket, r.role, colour?.cloth)) as unknown as HTMLImageElement, { frameWidth: FRAME_W * CHARACTER_SCALE, frameHeight: FRAME_H * CHARACTER_SCALE, endFrame: FRAME_COUNT - 1 });
+      const look = applyPeopleKit(lookFor(bucket, r.role, colour?.cloth), kit, bucket, colour?.cloth);
+      this.textures.addSpriteSheet(key, paintCharacterSheet(look) as unknown as HTMLImageElement, { frameWidth: FRAME_W * CHARACTER_SCALE, frameHeight: FRAME_H * CHARACTER_SCALE, endFrame: FRAME_COUNT - 1 });
     }
+    const scene = this.app.ui.scene;
     const sprite = this.add.sprite(r.x, r.y, key, idleFrame('down', 0)).setOrigin(0.5, CHARACTER_BASELINE / FRAME_H).setScale((r.kind === 'runner' ? 0.8 : 1) / CHARACTER_SCALE);
     const shadow = this.add.image(r.x, r.y, 'shadow-char').setOrigin(0.5, 0.5);
-    const name = this.add.text(r.x, r.y + 3, r.name, { fontFamily: 'monospace', fontSize: '5px', color: '#f3e6c9' }).setOrigin(0.5, 0).setResolution(6);
-    const bubble = this.add.text(r.x, r.y - 30, '', { fontFamily: 'monospace', fontSize: '6px', color: '#1a1418' }).setOrigin(0.5, 1).setResolution(6);
-    const bubbleBg = this.add.rectangle(r.x, r.y - 30, 10, 8, 0xf7f1e3).setOrigin(0.5, 1).setStrokeStyle(0.5, 0x2b2027);
+    const name = this.add.text(r.x, r.y + 3, r.name, { fontFamily: 'monospace', fontSize: '5px', color: scene.name }).setOrigin(0.5, 0).setResolution(6);
+    const bubble = this.add.text(r.x, r.y - 30, '', { fontFamily: 'monospace', fontSize: '6px', color: scene.bubbleText }).setOrigin(0.5, 1).setResolution(6);
+    const bubbleBg = this.add.rectangle(r.x, r.y - 30, 10, 8, scene.bubbleFill).setOrigin(0.5, 1).setStrokeStyle(0.5, scene.bubbleStroke);
     const emote = this.add.image(r.x + 9, r.y - 30, 'emote-ok').setOrigin(0.5, 1).setVisible(false);
     const v: ResidentView = { sprite, shadow, name, bubble, bubbleBg, emote, key, striking: false };
     this.views.set(r.id, v);
@@ -533,7 +655,8 @@ export class TownScene extends Phaser.Scene {
     v.shadow.setAlpha(0.9 * alpha);
     v.name.setAlpha(0.9 * alpha);
     const selected = this.selected === r.id;
-    v.name.setColor(selected ? '#ffd36b' : r.kind === 'runner' ? '#a9c4d6' : r.role === 'scheduled' ? '#9fd0e0' : r.isChild ? '#c9b58f' : r.memory ? '#8f8677' : '#f3e6c9');
+    const c = this.app.ui.scene;
+    v.name.setColor(selected ? c.nameSelected : r.kind === 'runner' ? c.nameRunner : r.role === 'scheduled' ? c.nameScheduled : r.isChild ? c.nameChild : r.memory ? c.nameMemory : c.name);
 
     const pose = residentPose(r, this.opts.sim.now());
     if (Number(v.sprite.frame.name) !== pose.frame) v.sprite.setFrame(pose.frame);
@@ -559,37 +682,35 @@ export class TownScene extends Phaser.Scene {
   // ---------------------------------------------------------------- light
 
   darkness(): number {
-    const h = this.opts.hour ?? (new Date().getHours() + new Date().getMinutes() / 60);
+    const env = this.app.environment;
+    const h = this.opts.hour ?? env.hour ?? (new Date().getHours() + new Date().getMinutes() / 60);
     const t = Math.cos(((h - 13) / 24) * Math.PI * 2);
-    return Phaser.Math.Clamp((0.5 - t * 0.5) * 0.78, 0, 0.78);
+    return Phaser.Math.Clamp((0.5 - t * 0.5) * env.night.strength + env.extraDim, 0, 0.9);
   }
 
   private drawNight(): void {
     const d = this.darkness();
+    const env = this.app.environment;
     const cam = this.cameras.main.worldView;
     this.night.clear();
     if (d < 0.05) { this.night.setVisible(false); return; }
     this.night.setVisible(true);
-    const warm = Phaser.Display.Color.ValueToColor(0xb08a6a);
-    const cold = Phaser.Display.Color.ValueToColor(0x2a3550);
+    const warm = Phaser.Display.Color.ValueToColor(env.night.warm);
+    const cold = Phaser.Display.Color.ValueToColor(env.night.cold);
     const mix = Phaser.Display.Color.Interpolate.ColorWithColor(warm, cold, 100, Math.round(Phaser.Math.Clamp((d - 0.2) / 0.6, 0, 1) * 100));
     const base = Phaser.Display.Color.GetColor(mix.r, mix.g, mix.b);
     const bright = Phaser.Display.Color.ValueToColor(0xffffff);
     const tint = Phaser.Display.Color.Interpolate.ColorWithColor(bright, Phaser.Display.Color.ValueToColor(base), 100, Math.round(d * 100));
     this.night.fill(Phaser.Display.Color.GetColor(tint.r, tint.g, tint.b), 1, cam.x - 8, cam.y - 8, cam.width + 16, cam.height + 16);
     const stamp = this.stamp.setBlendMode(Phaser.BlendModes.ADD).setTint(0xf2c063);
+    const glow = env.lampGlow;
     const draw = (x: number, y: number, scale: number, alpha: number) => {
       if (x < cam.x - 80 || x > cam.right + 80 || y < cam.y - 80 || y > cam.bottom + 80) return;
-      stamp.setPosition(x, y).setScale(scale).setAlpha(alpha);
+      stamp.setPosition(x, y).setScale(scale).setAlpha(Math.min(1, alpha * glow));
       this.night.draw(stamp);
     };
     for (const l of this.lampPositions) draw(l.x, l.y, 0.9, d * 0.9);
     for (const bv of this.buildingViews) if (bv.lit) draw(bv.glowX, bv.glowY, bv.building.kind === 'house' ? 0.7 : bv.building.kind === 'tavern' || bv.building.kind === 'forge' ? 1.7 : 1.3, d * (bv.building.kind === 'tavern' || bv.building.kind === 'forge' ? 0.8 : 0.55));
     for (const r of this.opts.sim.residents.values()) if (r.anim === 'work' && r.station && r.station.prop.kind === 'anvil') draw(r.x, r.y, 0.6, d * 0.8);
   }
-}
-
-function propKey(kind: PropKind, variant: number): string {
-  if (kind === 'tree') return `tree${variant % 6}`;
-  return kind;
 }

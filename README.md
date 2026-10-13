@@ -172,6 +172,65 @@ registry and the common Claude Code names. Unknown tools go to the market.
 - Use the bottom buttons to focus a building.
 - Toggle Follow to track the selected resident.
 - Click the minimap to jump.
+- **Appearance** opens the look drawer (see below).
+
+## Appearance
+
+The **Appearance** button in the bottom bar opens a drawer. It changes how Town
+looks and nothing else: residents, places, animations and emotes still come
+only from Hermes lifecycle events and the simulator. Lamps, smoke, water,
+cloud shadows, weather, haze and the drifting motes are decoration and never
+mean work, success, failure, or a resident.
+
+- **Theme**: preset cards. `Classic` is the default and the unchanged original look. `Night Market` is the same streets under lantern light, with its own HUD palette, people and colour grade.
+- **People**: the resident kit (`Townsfolk`, `Market folk`, `Plain clothes`). A kit restyles the figure; in a shared Town the profile clothing colour is applied last, so profile identification (legend, inspector, minimap) is the same in every kit.
+- **Map**: the maps a theme can host (`Town`, `Greenwood`). Both use the same buildings and tool-to-place table.
+- **Environment**: time of day (follow the clock, morning, midday, evening, night), weather (clear, mist, rain; decoration only), and motion.
+- **Reset**, **Save as my view**, **Copy share link**.
+
+Visual choices (theme, people, time, weather, motion) preview live. They do not
+restart the bridge, touch the simulator, or change the event source. A
+different **map** reloads the renderer scene, and the drawer says so first: a
+simulator is built for the new grid and, in live mode, re-reads the server's
+current snapshot, so the same residents come back. Nothing is sent to the
+server and Hermes is not restarted; in demo mode the scripted demo starts over.
+Selection and follow are cleared by a reload.
+
+**Where the choice lives.** Appearance is per browser. *Save as my view* writes
+a versioned record (`hermes-town.appearance`, schema `v: 1`) to this browser's
+`localStorage`; nothing is sent anywhere. A saved view only counts when it is a
+complete `v: 1` record with all six choices valid; anything incomplete or
+malformed is ignored, as if nothing were saved. Order of precedence:
+
+1. a link with appearance parameters (temporary, never written to your saved view);
+2. your saved view;
+3. the host's default: `VITE_DEFAULT_APPEARANCE` set when building, in the same query syntax (for example `VITE_DEFAULT_APPEARANCE="theme=night-market&weather=mist" npm run build`). This is the only Town-wide default. There is no browser control that changes it, and no server endpoint that writes it;
+4. Classic.
+
+**Share links** are canonical queries in a fixed order, for example
+`?theme=night-market&people=plainclothes&map=greenwood&time=evening&weather=mist&motion=reduced`.
+Parameters are `theme`, `people`, `map`, `time`, `weather`, `motion`; defaults
+are omitted except `theme`, and `agents=demo` is kept when present. A link
+replaces the whole choice (missing parameters mean "follow the theme"). An
+unknown value falls back to its default for that field only and Town says so on
+screen. A link only helps a viewer who can reach the same Town; live Town
+stays on loopback.
+
+The `?hour=` parameter from the demo instructions is still a debug override of
+the time of day and wins over the drawer's time setting.
+
+**Reduced motion.** `prefers-reduced-motion: reduce` is honoured by default
+and changes live when the system setting does. The drawer's *Motion* choice
+overrides it either way. Reduced motion slows wind and cloud drift, thins
+decorative particles, and replaces rain streaks with plain dimming. Residents
+walk, work and react exactly as before, and workplace smoke, which follows real
+activity, is unchanged.
+
+Adding a theme, people kit or map is one entry in `src/themes/` (see
+`registry.ts`); the renderer and HUD read the resolved contract and never
+branch on an id. `tests/verify-themes.mjs` validates every registered entry:
+reachable stations and doors, art for every placed prop, no remote or `url()`
+assets.
 
 ## Project layout
 
@@ -179,6 +238,9 @@ registry and the common Claude Code names. Unknown tools go to the market.
 src/art/        Sprite import, terrain, structures, and character poses
 src/assets/     Original runtime sprite atlases
 src/world/      Authored town, countryside, collision, and pathfinding
+src/themes/     Typed theme, people-kit and map registries; preferences, share links, reduced motion
+src/hud/        Appearance drawer, HUD palette, and minimap
+src/runtime.ts  One mounted Town: map, simulator, event source, Phaser game
 src/sim/        Resident state, intents, stations, and tool-to-place mapping
 src/live/       Live SSE and scripted demo sources
 src/scenes/     Phaser rendering, camera, lighting, and particles
@@ -198,10 +260,11 @@ npx playwright install chromium
 npm run verify:characters
 npm run verify:world
 npm run verify:onboarding
+npm run verify:appearance
 hermes plugins doctor integrations/hermes-town-plugin --ci
 ```
 
-`test:contracts` checks the plugin privacy allowlist, the real HTTP server contract, and cron keeper pre-registration, including cross-language key agreement with the plugin. `verify:characters` checks neutral arm symmetry, tool visibility, sprite bounds, distance-driven gait, workstation transitions, and event-driven reactions in Chromium. `verify:world` exercises navigation, resident lifecycle behavior, camera controls, offline-live honesty, and visual captures in Chromium.
+`test:contracts` checks the plugin privacy allowlist, the real HTTP server contract, cron keeper pre-registration, the shared Town, and the theme, people-kit and map registries (including preference and share-link parsing). `verify:appearance` drives the Appearance drawer in Chromium against the production build: keyboard access, live preview, save/reset, share links, invalid-link fallback, reduced motion, map reload, and live and disconnected integrity. Run `npm run build` first. `verify:characters` checks neutral arm symmetry, tool visibility, sprite bounds, distance-driven gait, workstation transitions, and event-driven reactions in Chromium. `verify:world` exercises navigation, resident lifecycle behavior, camera controls, offline-live honesty, and visual captures in Chromium.
 
 For character review, run `npm run build && node scripts/capture-characters.mjs`. It exports sprite atlases and captures the production renderer using explicitly scripted events, with live endpoints blocked. Images and metadata are saved under `output/playwright/characters/`; these are test fixtures, not live Hermes activity.
 
