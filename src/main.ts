@@ -1,88 +1,106 @@
-import Phaser from 'phaser';
-import { TILE, T } from './art/tiles';
 import { profileColorFor } from './art/profileColors';
-import { createDemoSource } from './live/demoSource';
-import { createLiveSource } from './live/liveSource';
-import type { Source } from './live/events';
-import { TownScene } from './scenes/TownScene';
-import { TownSim } from './sim/town';
+import { createAppearanceController, stripAppearanceFromAddress } from './hud/appearance';
+import { createAppearancePanel } from './hud/appearancePanel';
+import { createMinimap } from './hud/minimap';
+import { applyUiPalette } from './hud/uiPalette';
+import { TILE } from './art/tiles';
+import { createTownRuntime, type TownMode, type TownRuntime } from './runtime';
 import { PLACE_LABEL, type Place } from './sim/toolMap';
-import { MAP_H, MAP_W, buildTownMap } from './world/map';
-
+import type { ResolvedAppearance } from './themes/resolve';
 
 const params = new URLSearchParams(location.search);
 // A build can default to the scripted demo (VITE_DEFAULT_AGENTS=demo) for a
 // public showcase; ?agents=demo / ?agents=live always win over the build default.
 const agentsParam = params.get('agents') ?? import.meta.env.VITE_DEFAULT_AGENTS ?? 'live';
-const mode = agentsParam === 'demo' ? 'demo' : 'live';
+const mode: TownMode = agentsParam === 'demo' ? 'demo' : 'live';
 const hourParam = params.get('hour');
 const hour = hourParam !== null && Number.isFinite(Number(hourParam)) ? Number(hourParam) : null;
 
-const map = buildTownMap();
-const sim = new TownSim(map);
-const source: Source = mode === 'demo' ? createDemoSource(sim) : createLiveSource(sim);
+// Appearance is client-side view state: a link, this browser's saved view, or
+// an operator's build-time default (VITE_DEFAULT_APPEARANCE, same query syntax).
+const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+const controller = createAppearanceController({
+  location,
+  storage: (() => { try { return window.localStorage; } catch { return null; } })(),
+  hostDefault: (import.meta.env.VITE_DEFAULT_APPEARANCE as string | undefined) ?? null,
+  systemPrefersReducedMotion: () => reducedMotionQuery.matches,
+  stripLinkParameters: stripAppearanceFromAddress,
+});
+reducedMotionQuery.addEventListener('change', () => controller.refresh());
+applyUiPalette(controller.resolved().ui);
 
 const $ = <T extends HTMLElement>(sel: string): T => document.querySelector<T>(sel)!;
 const statusEl = $('#status');
 const panel = $('#panel');
 const followBtn = $<HTMLButtonElement>('#follow');
 const directorBtn = $<HTMLButtonElement>('#director');
-const minimap = $<HTMLCanvasElement>('#minimap');
 
-let scene: TownScene | null = null;
 let selectedId: string | null = null;
-
-const game = new Phaser.Game({
-  type: Phaser.AUTO,
-  parent: 'game',
-  width: Math.max(640, window.innerWidth),
-  height: Math.max(360, window.innerHeight),
-  pixelArt: true,
-  fps: { forceSetTimeOut: true, target: 60 },
-  roundPixels: true,
-  backgroundColor: '#1a1620',
-  scale: { mode: Phaser.Scale.NONE, autoCenter: Phaser.Scale.NO_CENTER },
-  scene: [],
+const mount = (appearance: ResolvedAppearance): TownRuntime => createTownRuntime({
+  mode, hour, appearance, onSelect: (id) => { selectedId = id; renderPanel(); },
 });
-const fit = (): void => {
-  const w = Math.max(320, window.innerWidth), h = Math.max(240, window.innerHeight);
-  if (game.scale.width !== w || game.scale.height !== h) game.scale.resize(w, h);
+let rt = mount(controller.resolved());
+// Browser verification reads these; getters follow a scene reload.
+(window as unknown as { __town: unknown }).__town = {
+  get game() { return rt.game; },
+  get sim() { return rt.sim; },
+  get map() { return rt.map; },
+  get source() { return rt.source; },
+  get runtime() { return rt; },
+  appearance: controller,
 };
-window.addEventListener('resize', fit);
-window.setInterval(fit, 1000);
-game.scene.add('town', TownScene, true, {
-  map,
-  sim,
-  hour,
-  onSelect: (id: string | null) => { selectedId = id; renderPanel(); },
+
+// Visual changes apply live to the running scene. A different map needs the
+// renderer scene (and the simulator built on its grid) rebuilt, which only
+// happens when the viewer asks for it.
+controller.subscribe(() => {
+  const next = controller.resolved();
+  applyUiPalette(next.ui);
+  rt.apply(next);
 });
-game.events.once("ready", () => { scene = game.scene.getScene("town") as TownScene; });
-(window as unknown as { __town: unknown }).__town = { game, sim, map };
-source.start();
+const appearancePanel = createAppearancePanel({ controller, mountedMapId: () => rt.preset.id, reloadMap });
+
+function reloadMap(): void {
+  selectedId = null;
+  rt.destroy();
+  rt = mount(controller.resolved());
+  syncButtons();
+  renderPanel();
+  appearancePanel.render();
+}
 
 // ------------------------------------------------------------------ HUD
 
 for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-goto]')) {
-  btn.addEventListener('click', () => scene?.goTo(btn.dataset.goto!));
+  btn.addEventListener('click', () => rt.scene()?.goTo(btn.dataset.goto!));
 }
-$('#overview').addEventListener('click', () => { scene?.overview(); renderStatus(); });
+$('#overview').addEventListener('click', () => { rt.scene()?.overview(); renderStatus(); });
 directorBtn.addEventListener('click', () => {
+  const scene = rt.scene();
   if (!scene) return;
   scene.setDirector(!scene.isDirector());
-  directorBtn.textContent = `Director: ${scene.isDirector() ? 'on' : 'off'}`;
-  directorBtn.classList.toggle('on', scene.isDirector());
+  syncButtons();
 });
 followBtn.addEventListener('click', () => {
+  const scene = rt.scene();
   if (!scene) return;
   const on = !scene.isFollowing();
   if (on && !selectedId) {
-    const first = sim.active()[0];
+    const first = rt.sim.active()[0];
     if (first) scene.select(first.id);
   }
   scene.setFollow(on);
-  followBtn.textContent = `Follow: ${scene.isFollowing() ? 'on' : 'off'}`;
-  followBtn.classList.toggle('on', scene.isFollowing());
+  syncButtons();
 });
+
+function syncButtons(): void {
+  const scene = rt.scene();
+  const director = scene?.isDirector() ?? true;
+  directorBtn.textContent = `Director: ${director ? 'on' : 'off'}`;
+  directorBtn.classList.toggle('on', director);
+  followBtn.textContent = `Follow: ${scene?.isFollowing() ? 'on' : 'off'}`;
+  followBtn.classList.toggle('on', scene?.isFollowing() ?? false);
+}
 
 function ago(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -91,6 +109,7 @@ function ago(seconds: number): string {
 }
 
 function renderPanel(): void {
+  const sim = rt.sim;
   const r = selectedId ? sim.residents.get(selectedId) : null;
   if (!r) { panel.hidden = true; return; }
   panel.hidden = false;
@@ -120,7 +139,7 @@ function renderPanel(): void {
 function renderLegend(): void {
   const legend = $('#legend');
   const counts = new Map<string, { slot: number; colour: string; count: number }>();
-  for (const r of sim.residents.values()) {
+  for (const r of rt.sim.residents.values()) {
     if (r.kind !== 'session' || r.state === 'gone' || r.memory) continue;
     const colour = profileColorFor(r.profile, r.profileSlot);
     if (!colour || r.profile === null) continue;
@@ -149,8 +168,8 @@ function escapeHtml(s: string): string {
 }
 
 function renderStatus(): void {
-  followBtn.textContent = `Follow: ${scene?.isFollowing() ? 'on' : 'off'}`;
-  followBtn.classList.toggle('on', scene?.isFollowing() ?? false);
+  const { sim, source } = rt;
+  syncButtons();
   const st = source.status();
   const active = sim.active();
   const resting = [...sim.residents.values()].filter((r) => r.state === 'resting' && !r.memory).length;
@@ -194,53 +213,23 @@ function renderStatus(): void {
 
 // ------------------------------------------------------------- minimap
 
-const base = document.createElement('canvas');
-base.width = MAP_W; base.height = MAP_H;
-{
-  const c = base.getContext('2d')!;
-  for (let y = 0; y < MAP_H; y++) for (let x = 0; x < MAP_W; x++) {
-    const g = map.ground[y]![x]!;
-    c.fillStyle = g === T.water || g === T.water2 || g === T.water3 ? '#2f5566'
-      : g === T.cobble || g === T.cobble2 ? '#6f6a68'
-      : g === T.path || g === T.path2 || g === T.bridge ? '#8a6a44'
-      : g === T.trail || g === T.trail2 ? '#6f6a3e'
-      : g === T.grassDry || g === T.grassDry2 || g === T.seed0 ? '#7a7a3c'
-      : g === T.grassWet || g === T.grassWet2 || g === T.mudWet ? '#3f5a30'
-      : g === T.ledge || g === T.cliff ? '#5a4a3e'
-      : '#4f6b34';
-    c.fillRect(x, y, 1, 1);
-  }
-  for (const p of map.props) if (p.kind === 'tree') { c.fillStyle = '#2f5228'; c.fillRect(Math.floor((p.x + 16) / TILE), Math.floor((p.y + 34) / TILE), 1, 1); }
-  for (const b of [...map.buildings, ...map.homes]) { c.fillStyle = b.kind === 'house' ? '#6b3d2a' : '#c9b391'; c.fillRect(b.x, b.y, b.w, b.h); }
-}
-const mctx = minimap.getContext('2d')!;
-mctx.imageSmoothingEnabled = false;
-const scaleX = minimap.width / MAP_W, scaleY = minimap.height / MAP_H;
-
-function renderMinimap(): void {
-  mctx.clearRect(0, 0, minimap.width, minimap.height);
-  mctx.drawImage(base, 0, 0, minimap.width, minimap.height);
-  for (const r of sim.residents.values()) {
-    const dot = profileColorFor(r.profile, r.profileSlot);
-    mctx.fillStyle = r.id === selectedId ? '#ffd36b' : dot ? dot.cloth : r.isChild ? '#c9b58f' : '#f3e6c9';
-    mctx.fillRect(Math.round((r.x / TILE) * scaleX) - 1, Math.round((r.y / TILE) * scaleY) - 1, 3, 3);
-  }
-  if (scene) {
-    const v = scene.getCameraRect();
-    mctx.strokeStyle = 'rgba(255,255,255,0.7)';
-    mctx.lineWidth = 1;
-    mctx.strokeRect((v.x / TILE) * scaleX, (v.y / TILE) * scaleY, (v.w / TILE) * scaleX, (v.h / TILE) * scaleY);
-  }
-}
-minimap.addEventListener('click', (e) => {
-  const rect = minimap.getBoundingClientRect();
-  const x = ((e.clientX - rect.left) / rect.width) * MAP_W * TILE;
-  const y = ((e.clientY - rect.top) / rect.height) * MAP_H * TILE;
-  scene?.centerOn(x, y);
+const minimapCanvas = $<HTMLCanvasElement>('#minimap');
+const minimap = createMinimap(minimapCanvas, {
+  map: () => rt.map,
+  sim: () => rt.sim,
+  scene: () => rt.scene(),
+  selectedId: () => selectedId,
+  palette: () => controller.resolved().ui.minimap,
+});
+minimapCanvas.addEventListener('click', (e) => {
+  const rect = minimapCanvas.getBoundingClientRect();
+  const x = ((e.clientX - rect.left) / rect.width) * rt.map.grid.w * TILE;
+  const y = ((e.clientY - rect.top) / rect.height) * rt.map.grid.h * TILE;
+  rt.scene()?.centerOn(x, y);
 });
 
 window.setInterval(() => { renderStatus(); renderPanel(); }, 500);
-const loop = (): void => { renderMinimap(); requestAnimationFrame(loop); };
+const loop = (): void => { minimap.render(); requestAnimationFrame(loop); };
 requestAnimationFrame(loop);
 
 void PLACE_LABEL;
