@@ -105,7 +105,12 @@ export function serializeStored(choice: Choice): string {
   return JSON.stringify(stored);
 }
 
-/** A stored value of another version, or anything unparseable, yields no preference at all. */
+/**
+ * A saved view is all-or-nothing: another version, anything unparseable, or a
+ * record that lacks or mis-states any of the six choice fields yields no
+ * preference at all, so the precedence chain falls through to the host default
+ * rather than letting a malformed record pin Classic defaults.
+ */
 export function parseStored(text: string | null | undefined): Parsed | null {
   if (typeof text !== 'string' || text.length === 0 || text.length > 2048) return null;
   let raw: unknown;
@@ -113,7 +118,12 @@ export function parseStored(text: string | null | undefined): Parsed | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
   if (record.v !== APPEARANCE_SCHEMA_VERSION) return null;
-  return parseChoice((key) => record[key]);
+  const parsed = parseChoice((key) => record[key]);
+  if (parsed.rejected.length > 0) return null;
+  for (const key of CHOICE_KEYS) {
+    if (record[key] === undefined || record[key] === null) return null;
+  }
+  return parsed;
 }
 
 export interface StorageLike {

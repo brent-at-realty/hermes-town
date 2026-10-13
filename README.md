@@ -198,7 +198,9 @@ Selection and follow are cleared by a reload.
 
 **Where the choice lives.** Appearance is per browser. *Save as my view* writes
 a versioned record (`hermes-town.appearance`, schema `v: 1`) to this browser's
-`localStorage`; nothing is sent anywhere. Order of precedence:
+`localStorage`; nothing is sent anywhere. A saved view only counts when it is a
+complete `v: 1` record with all six choices valid; anything incomplete or
+malformed is ignored, as if nothing were saved. Order of precedence:
 
 1. a link with appearance parameters (temporary, never written to your saved view);
 2. your saved view;

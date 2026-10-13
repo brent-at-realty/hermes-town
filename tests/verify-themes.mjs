@@ -255,12 +255,55 @@ ok('stored preferences of another version, or junk, yield nothing', () => {
     assert.equal(t.parseStored(text), null, String(text).slice(0, 30));
   }
 });
-ok('stored preferences with some bad fields keep the good ones', () => {
-  const p = t.parseStored('{"v":1,"theme":"night-market","people":{"a":1},"map":"atlantis","motion":"reduced"}');
-  assert.equal(p.choice.theme, 'night-market');
-  assert.equal(p.choice.motion, 'reduced');
-  assert.equal(p.choice.people, 'theme');
-  assert.deepEqual(p.rejected, ['people', 'map']);
+ok('stored preferences must be complete: bad or missing fields yield nothing, never partial defaults', () => {
+  assert.equal(t.parseStored('{"v":1,"theme":"night-market","people":{"a":1},"map":"atlantis","motion":"reduced"}'), null);
+  assert.equal(t.parseStored('{"v":1}'), null);
+  assert.equal(t.parseStored('{"v":1,"theme":null,"people":null,"map":null,"time":null,"weather":null,"motion":null}'), null);
+  const choice = { theme: 'night-market', people: 'plainclothes', map: 'greenwood', time: 'night', weather: 'rain', motion: 'full' };
+  const full = { v: 1, ...choice };
+  const ok1 = t.parseStored(JSON.stringify(full));
+  assert.deepEqual(ok1.choice, choice);
+  assert.deepEqual(ok1.rejected, []);
+  for (const key of ['theme', 'people', 'map', 'time', 'weather', 'motion']) {
+    const missing = { ...full }; delete missing[key];
+    assert.equal(t.parseStored(JSON.stringify(missing)), null, `missing ${key}`);
+    assert.equal(t.parseStored(JSON.stringify({ ...full, [key]: null })), null, `null ${key}`);
+    for (const bad of ['bogus', 7, {}, [], true, '../x', 'x'.repeat(40)]) {
+      assert.equal(t.parseStored(JSON.stringify({ ...full, [key]: bad })), null, `invalid ${key}=${JSON.stringify(bad)}`);
+    }
+  }
+});
+ok('an incomplete saved record never overrides a valid host default or Classic, and never throws', () => {
+  const mem = new Map();
+  const storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
+  const full = { v: 1, theme: 'classic', people: 'theme', map: 'theme', time: 'theme', weather: 'mist', motion: 'system' };
+  const noWeather = { ...full }; delete noWeather.weather;
+  const incomplete = [{ v: 1 }, { v: 1, theme: 'night-market' }, noWeather, { ...full, motion: 'bogus' }, { ...full, map: 7 }];
+  for (const record of incomplete) {
+    mem.set(t.APPEARANCE_STORAGE_KEY, JSON.stringify(record));
+    const label = JSON.stringify(record);
+    const host = t.loadChoice({ search: '', storage, hostDefault: 'theme=night-market&weather=rain' });
+    assert.equal(host.source, 'host', label);
+    assert.equal(host.choice.theme, 'night-market', label);
+    assert.equal(host.choice.weather, 'rain', label);
+    const none = t.loadChoice({ search: '', storage });
+    assert.equal(none.source, 'default', label);
+    assert.deepEqual(none.choice, t.DEFAULT_CHOICE, label);
+  }
+  // A complete record keeps its precedence over the host default.
+  mem.set(t.APPEARANCE_STORAGE_KEY, JSON.stringify(full));
+  const saved = t.loadChoice({ search: '', storage, hostDefault: 'theme=night-market' });
+  assert.equal(saved.source, 'saved');
+  assert.equal(saved.choice.weather, 'mist');
+  // Saving over an incomplete record yields a valid saved view.
+  mem.set(t.APPEARANCE_STORAGE_KEY, '{"v":1}');
+  assert.ok(t.saveStored(storage, { ...t.DEFAULT_CHOICE, theme: 'night-market', weather: 'rain' }));
+  const resaved = t.loadChoice({ search: '', storage, hostDefault: 'theme=classic' });
+  assert.equal(resaved.source, 'saved');
+  assert.equal(resaved.choice.theme, 'night-market');
+  // An incomplete record does not suppress a share link either.
+  mem.set(t.APPEARANCE_STORAGE_KEY, '{"v":1}');
+  assert.equal(t.loadChoice({ search: '?theme=night-market', storage }).source, 'link');
 });
 ok('storage that throws behaves like an empty store', () => {
   const throwing = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); }, removeItem() { throw new Error('denied'); } };
