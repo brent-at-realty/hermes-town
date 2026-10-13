@@ -80,8 +80,8 @@ function stroke(points: Point[], width: number, put: (x: number, y: number) => v
   }
 }
 
-export function buildTownLocal(): TownMap {
-  const r = mulberry(4321);
+export function buildTownLocal(seed = 4321): TownMap {
+  const r = mulberry(seed);
   const ground: number[][] = [];
   for (let y = 0; y < LOCAL_H; y++) {
     ground.push([]);
@@ -468,8 +468,8 @@ export function buildTownLocal(): TownMap {
 }
 
 /** The town embedded in its countryside. */
-export function buildTownMap(): TownMap {
-  return buildCountryside(buildTownLocal());
+export function buildTownMap(variant = 0): TownMap {
+  return buildCountryside(buildTownLocal(variant === 0 ? 4321 : 4321 + variant * 17), variant);
 }
 
 export function tileCenter(p: Point): { x: number; y: number } {

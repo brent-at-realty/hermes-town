@@ -71,8 +71,8 @@ const GRASS_FAMILY = new Set<number>([T.grass, T.grass2, T.grass3, T.grassTall, 
 
 // ------------------------------------------------------------ the pass
 
-export function buildCountryside(local: TownMap): TownMap {
-  const r = mulberry(99);
+export function buildCountryside(local: TownMap, variant = 0): TownMap {
+  const r = mulberry(99 + variant * 31);
   const inb = (x: number, y: number) => x >= 0 && y >= 0 && x < MAP_W && y < MAP_H;
   const key = (x: number, y: number) => y * MAP_W + x;
   const inTown = (x: number, y: number) => x >= TOWN_OX && y >= TOWN_OY && x < TOWN_OX + LOCAL_W && y < TOWN_OY + LOCAL_H;
@@ -106,9 +106,9 @@ export function buildCountryside(local: TownMap): TownMap {
   const trail = new Set<number>();
 
   // ---- height field: gentle rise to the north, rolling elsewhere
-  const hn = valueNoise(7);
-  const cn = valueNoise(11);
-  const fn = valueNoise(13);
+  const hn = valueNoise(7 + variant);
+  const cn = valueNoise(11 + variant);
+  const fn = valueNoise(13 + variant);
   const height = new Float32Array(MAP_W * MAP_H);
   for (let y = 0; y < MAP_H; y++) for (let x = 0; x < MAP_W; x++) {
     const h = fbm(hn, x, y, 3, 22) * 0.78 + (1 - y / MAP_H) * 0.22;
@@ -129,7 +129,7 @@ export function buildCountryside(local: TownMap): TownMap {
   stroke(wobble([T0(60, 0), { x: 84, y: 9 }, { x: 86, y: 0 }], r, 0.8), 4, putWater);
   stroke(wobble([T0(61, 41), { x: 89, y: 64 }, { x: 86, y: 70 }, { x: 90, y: MAP_H - 1 }], r, 0.8), 4, putWater);
   // a wet hollow in the low ground to the south-west
-  const pn = valueNoise(21);
+  const pn = valueNoise(21 + variant);
   for (let y = 55; y <= 65; y++) for (let x = 17; x <= 33; x++) if (Math.hypot((x - 25) / 1.5, (y - 60) * 1.05) < 4.1 + (pn(x * 0.5, y * 0.5) - 0.5) * 1.7) putWater(x, y);
 
   // ---- trails: single-width, worn, leading to the places worth finding
