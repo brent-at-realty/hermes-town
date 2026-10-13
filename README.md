@@ -4,7 +4,7 @@ A local pixel-art interface for Hermes Agent. Every resident represents a real H
 
 ![Hermes Town](artifacts/world-remodel.png)
 
-> v0.3.0 packages the bridge, local server, and prebuilt town together. Runtime use needs Hermes and Node.js, not a repository checkout, npm, or a frontend build. Catalog availability follows a separately reviewed pin update.
+> v0.4.0 packages the bridge, local server, and prebuilt town together, serves one shared Town for every local Hermes profile, and adds the Appearance drawer. Runtime use needs Hermes and Node.js, not a repository checkout, npm, or a frontend build. Catalog availability follows a separately reviewed pin update.
 
 ## Requirements
 

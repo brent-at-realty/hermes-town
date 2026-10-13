@@ -2,7 +2,7 @@
 
 All notable changes to Hermes Town are documented here.
 
-## Unreleased
+## 0.4.0 - 2026-10-14
 
 ### Town Appearance
 
