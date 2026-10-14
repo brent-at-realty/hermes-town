@@ -1,5 +1,5 @@
 import type { AppearanceController } from './appearance';
-import { MOTION_OPTIONS, TIME_OPTIONS, WEATHER_OPTIONS } from '../themes/environment';
+import { MOTION_OPTIONS, TIME_OPTIONS, weatherOptionsFor } from '../themes/environment';
 import { KITS, THEMES, compatibleMaps } from '../themes/registry';
 import type { ChoiceKey } from '../themes/preferences';
 
@@ -14,6 +14,8 @@ export interface PanelDeps {
   mountedMapId(): string;
   /** Rebuild the renderer scene for the chosen map. */
   reloadMap(): void;
+  /** The mounted map's weather wording, which is what is actually drawn. */
+  mountedAtmosphere?(): 'orbit' | undefined;
 }
 
 const $ = <T extends HTMLElement>(sel: string): T => document.querySelector<T>(sel)!;
@@ -49,6 +51,9 @@ export function createAppearancePanel(deps: PanelDeps): { toggle(): void; open()
   const linkEl = $<HTMLInputElement>('#ap-link');
   const peopleHint = $('#ap-people-hint');
   const motionHint = $('#ap-motion-hint');
+  const packs = $('#ap-packs');
+  const routeNote = $('#ap-route-note');
+  const pendingRoute = $('#ap-pending-route');
 
   // theme cards: native radios, so arrow keys, focus and screen readers work for free
   for (const t of THEMES) {
@@ -68,7 +73,31 @@ export function createAppearancePanel(deps: PanelDeps): { toggle(): void; open()
   for (const s of [people, time, weather]) s.append(option('theme', 'Theme default'));
   for (const k of KITS) people.append(option(k.id, k.label));
   for (const o of TIME_OPTIONS) time.append(option(o.id, o.label));
-  for (const o of WEATHER_OPTIONS) weather.append(option(o.id, o.label));
+  let weatherWording: 'orbit' | undefined | null = null;
+  const fillWeather = (atmosphere: 'orbit' | undefined): void => {
+    if (weatherWording === atmosphere) return;
+    weatherWording = atmosphere;
+    const keep = weather.value;
+    weather.replaceChildren(option('theme', 'Theme default'), ...weatherOptionsFor(atmosphere).map((o) => option(o.id, o.label)));
+    if (keep) weather.value = keep;
+  };
+  fillWeather(deps.mountedAtmosphere?.());
+  // complete packs: one click sets theme, recommended people, map and environment together. The map still waits for Apply.
+  for (const t of THEMES) {
+    if (!t.pack) continue;
+    const row = document.createElement('div');
+    row.className = 'pack';
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.id = `ap-pack-${t.id}`;
+    btn.textContent = `Use complete pack: ${t.label}`;
+    const summary = document.createElement('small'); summary.textContent = t.pack.summary;
+    row.append(btn, summary);
+    packs.append(row);
+    btn.addEventListener('click', () => {
+      controller.update({ theme: t.id, people: t.people, map: t.maps.default, time: 'theme', weather: 'theme' });
+      say(`${t.label} complete pack chosen: theme, people, map and environment. Reload the scene to show its map.`);
+    });
+  }
   for (const o of MOTION_OPTIONS) motion.append(option(o.id, o.label));
 
   const say = (text: string): void => { status.textContent = text; };
@@ -120,6 +149,9 @@ export function createAppearancePanel(deps: PanelDeps): { toggle(): void; open()
     map.replaceChildren(...compatibleMaps(r.theme).map((m) => option(m.id, m.label)));
     map.value = r.map.id;
     $('#ap-map-hint').textContent = r.map.description;
+    routeNote.textContent = r.map.routeNote ?? '';
+    pendingRoute.textContent = r.map.routeNote ?? '';
+    fillWeather(deps.mountedAtmosphere?.());
     time.value = c.time;
     weather.value = c.weather;
     motion.value = c.motion;

@@ -2,8 +2,9 @@ import type { Facing, RoleClass, WorkStyle } from '../art/characters';
 import { hashString } from '../art/painter';
 import { TILE } from '../art/tiles';
 import type { TownEvent } from '../live/events';
-import { tileCenter, type Building, type Station, type TownMap } from '../world/map';
+import { STALL_KINDS, tileCenter, type Building, type Station, type TownMap } from '../world/map';
 import { findPath, nearestWalkable, type Point } from '../world/pathfind';
+import { transitPhase, transitPoint, type RouteLeg } from '../world/transit';
 import { IDLE_TARGET, THINK_TARGET, targetForTool, type Place, type ToolTarget } from './toolMap';
 import { REACTION_DURATION } from '../art/characters';
 
@@ -114,6 +115,28 @@ export interface Resident {
   reaction: 'complete' | 'fail' | null;
   reactionAt: number;
   reactionUntil: number;
+  /**
+   * The remaining legs of a route on a map with lifts or shuttles (empty on maps without transit).
+   * Internal routing only: it is never part of the lifecycle wire contract and never persisted.
+   */
+  legs: RouteLeg[];
+  legIndex: number;
+  /**
+   * Set only while this resident is riding a lift or shuttle on its way to a real station. The resident is
+   * still one resident in one state ('moving', 'leaving' or 'returning'); this is the visual route segment.
+   */
+  transit: TransitRide | null;
+  /** A new destination that arrived mid-ride: the ride finishes first, then the walk to this tile begins. */
+  deferredTarget: Point | null;
+}
+
+export interface TransitRide {
+  connectorId: string;
+  elapsed: number;
+  duration: number;
+  /** World-pixel centres of the boarding and exit tiles. */
+  from: Point;
+  to: Point;
 }
 
 export interface SimEvent { at: number; text: string; residentId: string }
@@ -160,7 +183,7 @@ export class TownSim {
   /** The stall a skill works from, assigning the least recently used one on first sight. */
   stallFor(skill: string): Station | null {
     const known = this.stalls.get(skill);
-    const stallStations = this.map.stations.filter((s) => s.place === 'market' && s.prop.kind === 'stall');
+    const stallStations = this.map.stations.filter((s) => s.place === 'market' && STALL_KINDS.has(s.prop.kind));
     if (known) { this.stallUse.set(skill, this.time); return stallStations.find((s) => s.id === known) ?? null; }
     if (stallStations.length === 0) return null;
     const taken = new Set(this.stalls.values());
@@ -226,8 +249,13 @@ export class TownSim {
         if (next) this.startIntent(r, next);
       }
       if ((r.state === 'moving' || r.state === 'leaving' || r.state === 'returning') && r.path.length > 0) {
-        const end = tileCenter(r.path[r.path.length - 1]!);
-        r.x = end.x; r.y = end.y; r.pathIndex = r.path.length - 1;
+        // A replayed snapshot never replays a ride: the resident is simply where its route ends.
+        const lastWalk = [...r.legs].reverse().find((leg) => leg.kind === 'walk');
+        const points = lastWalk && lastWalk.kind === 'walk' ? lastWalk.points : r.path;
+        const end = tileCenter(points[points.length - 1]!);
+        r.transit = null; r.deferredTarget = null; r.legs = []; r.legIndex = 0;
+        r.path = points;
+        r.x = end.x; r.y = end.y; r.pathIndex = points.length - 1;
         this.arrive(r);
       }
       r.history = r.history.filter((h) => h.text !== 'arrived in town' && h.text !== 'arrived to help');
@@ -357,6 +385,7 @@ export class TownSim {
       history: [], lastEventAt: this.time, spawnedAt: this.time, fade: 1, clock: (hashString(id) % 60000) / 1000, seq: 0, runnerCount: 0,
       walkDistance: 0, settleUntil: 0, settleFacing: null, settledAnim: 'stand', workStartedAt: this.time,
       reaction: null, reactionAt: 0, reactionUntil: 0,
+      legs: [], legIndex: 0, transit: null, deferredTarget: null,
     };
   }
 
@@ -408,7 +437,9 @@ export class TownSim {
     }
     this.runnerSerial += 1;
     const runner = this.makeResident(`${r.id}#r${this.runnerSerial}`, label, r.role, 'runner', r.id);
-    runner.x = r.x; runner.y = r.y;
+    // a coordinator mid-ride sends its runner from where the ride ends, never from inside the shaft or the craft
+    const origin = r.transit ? r.transit.to : { x: r.x, y: r.y };
+    runner.x = origin.x; runner.y = origin.y;
     runner.title = r.title;
     runner.profile = r.profile;
     runner.profileSlot = r.profileSlot;
@@ -494,11 +525,71 @@ export class TownSim {
   private walkTo(r: Resident, target: Point): void {
     r.settleUntil = 0;
     r.settleFacing = null;
+    // A resident inside a lift or shuttle finishes the ride first; the new destination is routed from where it steps out.
+    if (r.transit) { r.deferredTarget = target; return; }
     const from = nearestWalkable(this.map.grid, { x: Math.floor(r.x / TILE), y: Math.floor(r.y / TILE) }) ?? this.map.entrance;
     const to = nearestWalkable(this.map.grid, target) ?? target;
+    const transit = this.map.transit;
+    const plan = transit ? transit.route(from, to) : null;
+    if (plan) {
+      r.legs = plan.legs;
+      r.legIndex = 0;
+      this.loadLeg(r);
+      return;
+    }
+    r.legs = []; r.legIndex = 0;
     r.path = findPath(this.map.grid, from, to) ?? [from, to];
     r.pathIndex = 0;
     r.anim = 'walk';
+  }
+
+  /** Begin the current leg of a planned route: a walk along its points, or a ride on its connector. */
+  private loadLeg(r: Resident): void {
+    const leg = r.legs[r.legIndex];
+    if (!leg) return;
+    if (leg.kind === 'walk') {
+      r.path = leg.points;
+      r.pathIndex = 0;
+      r.anim = 'walk';
+      return;
+    }
+    const from = tileCenter(leg.from), to = tileCenter(leg.to);
+    r.path = [leg.from, leg.to];
+    r.pathIndex = 0;
+    r.x = from.x; r.y = from.y;
+    r.anim = 'stand';
+    r.facing = 'down';
+    r.transit = { connectorId: leg.connectorId, elapsed: 0, duration: leg.durationMs / 1000, from, to };
+  }
+
+  /** Move to the next leg of the route. False when the route is finished and the resident has arrived. */
+  private nextLeg(r: Resident): boolean {
+    if (r.legIndex + 1 >= r.legs.length) return false;
+    r.legIndex += 1;
+    this.loadLeg(r);
+    return true;
+  }
+
+  private stepTransit(r: Resident, dt: number): void {
+    const ride = r.transit;
+    if (!ride) return;
+    ride.elapsed += dt;
+    const connector = this.map.transit?.byId(ride.connectorId);
+    if (connector && ride.elapsed < ride.duration) {
+      const phase = transitPhase(ride.elapsed, ride.duration);
+      const at = transitPoint(connector, ride.from, ride.to, phase.t);
+      r.x = at.x; r.y = at.y;
+      return;
+    }
+    r.x = ride.to.x; r.y = ride.to.y;
+    r.transit = null;
+    const deferred = r.deferredTarget;
+    if (deferred) {
+      r.deferredTarget = null;
+      this.walkTo(r, deferred);
+      return;
+    }
+    if (!this.nextLeg(r)) this.arrive(r);
   }
 
   private startIntent(r: Resident, intent: Intent): void {
@@ -555,7 +646,9 @@ export class TownSim {
   private returnRunner(runner: Resident): void {
     this.leaveStation(runner);
     const parent = runner.parentId ? this.residents.get(runner.parentId) : null;
-    const target = parent && parent.state !== 'gone' ? { x: Math.floor(parent.x / TILE), y: Math.floor(parent.y / TILE) + 1 } : runner.home.door;
+    // a coordinator still in a lift or shuttle is met where its ride ends
+    const spot = parent?.transit ? parent.transit.to : parent ? { x: parent.x, y: parent.y } : null;
+    const target = parent && spot && parent.state !== 'gone' ? { x: Math.floor(spot.x / TILE), y: Math.floor(spot.y / TILE) + 1 } : runner.home.door;
     runner.intent = { target: IDLE_TARGET, tool: null, tile: target };
     this.walkTo(runner, target);
     runner.state = 'returning';
@@ -648,6 +741,8 @@ export class TownSim {
     for (const r of this.residents.values()) {
       r.clock += dt;
       if (r.emote && this.time > r.emoteUntil) r.emote = null;
+      // A ride in a lift or shuttle carries on whatever else is happening: a completion gesture does not strand it mid-shaft.
+      if (r.transit) { this.stepTransit(r, dt); continue; }
       // Reactions are finite gestures; a new assignment can interrupt them.
       // The lifecycle record changes on receipt, not when a gesture ends.
       if (r.reaction) {
@@ -791,7 +886,11 @@ export class TownSim {
     let budget = WALK_SPEED * dt;
     while (budget > 0) {
       const next = r.path[r.pathIndex + 1];
-      if (!next) { this.arrive(r); return; }
+      if (!next) {
+        if (this.nextLeg(r)) { if (r.transit) return; continue; }
+        this.arrive(r);
+        return;
+      }
       const c = tileCenter(next);
       const dx = c.x - r.x, dy = c.y - r.y;
       const d = Math.hypot(dx, dy);

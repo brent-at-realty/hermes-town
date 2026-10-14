@@ -45,7 +45,7 @@ export const CLASSIC: TownTheme = {
     },
   },
   people: 'townsfolk',
-  maps: { default: 'town', compatible: ['town', 'greenwood'] },
+  maps: { default: 'town', compatible: ['town', 'greenwood', 'cyber-city', 'orbital-system'] },
   art: {
     worldTint: 0xffffff,
     buildingTint: 0xffffff,

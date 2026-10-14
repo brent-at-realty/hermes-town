@@ -88,7 +88,7 @@ export interface Look {
   cloth2: string;
   pants: string;
   skin: string;
-  hat: 'none' | 'cap' | 'hood' | 'band' | 'brim' | 'goggles';
+  hat: 'none' | 'cap' | 'hood' | 'band' | 'brim' | 'goggles' | 'visor' | 'helmet';
   apron: boolean;
   /** Optional for callers with hand-authored legacy looks. */
   garment?: 'jacket' | 'tunic' | 'coat';
@@ -108,6 +108,18 @@ export interface Look {
   hemBand?: string;
   /** Sleeve colour, when the arms are not the same cloth as the body (shirt sleeves under a coloured tunic). */
   sleeve?: string;
+  /**
+   * A whole-figure silhouette. 'operative' is a long, wide-hemmed coat with a high collar, shoulder panels and a
+   * visor; 'crew' is a pressure suit with a round helmet and a back unit. The profile colour (`cloth`) is then worn
+   * as the broad chest, shoulder, bag and helmet-ring panels over the `shell`, so it stays the most conspicuous colour.
+   */
+  style?: 'operative' | 'crew';
+  /** The coat or suit that the profile colour is worn on, for a styled figure. */
+  shell?: string;
+  /** Neon, light or ring accent of a styled figure. */
+  accent?: string;
+  /** The resident's role, for small deterministic accessory variations of a styled figure. Never changes the animation. */
+  role?: RoleClass;
 }
 
 /** A stable look from a stable id, nudged by role so jobs read at a glance. A profile colour, when given, replaces the role's cloth. */
@@ -140,6 +152,7 @@ export function lookFor(id: string, role: RoleClass, profileCloth?: string): Loo
     : role === 'research' || role === 'general' ? 'tunic' : 'jacket';
   if (profileCloth !== undefined) look.cloth = profileCloth;
   look.cloth2 = shade(look.cloth, 0.72);
+  look.role = role;
   return look;
 }
 
@@ -332,18 +345,21 @@ function drawFrame(look: Look, facing: Facing, mode: Mode, phase: number): Paint
   const hem = garment === 'jacket' ? 19 : garment === 'tunic' ? 21 : 24;
   const tx = side ? 6 : 5, tw = side ? 8 : 10;
   const hemFollow = walking ? [0,0,-1,-1,0,0,1,1][phase]! : 0;
-  rect(tx, torsoTop, tw, hem - 12, look.cloth);
-  rect(tx + tw - 2, torsoTop + 1, 2, hem - 13, look.cloth2);
+  // A styled figure wears its shell on the body and keeps the profile colour for the panels drawn over it.
+  const baseCloth = look.style ? (look.shell ?? look.cloth) : look.cloth;
+  const baseCloth2 = look.style ? shade(baseCloth, 0.72) : look.cloth2;
+  rect(tx, torsoTop, tw, hem - 12, baseCloth);
+  rect(tx + tw - 2, torsoTop + 1, 2, hem - 13, baseCloth2);
   if (garment === 'jacket') {
     // Cropped square hem, lapels and a visible trouser waistband.
-    rect(tx, 18 + oy, tw, 1, look.cloth2);
+    rect(tx, 18 + oy, tw, 1, baseCloth2);
     rect(tx, 19 + oy, tw, 2, look.pants);
-    if (!back) { rect(side ? 6 : 8, 13 + oy, 1, 3, look.cloth2); rect(side ? 7 : 11, 13 + oy, 1, 2, look.cloth2); }
+    if (!back) { rect(side ? 6 : 8, 13 + oy, 1, 3, baseCloth2); rect(side ? 7 : 11, 13 + oy, 1, 2, baseCloth2); }
   } else {
     // Tunic flares once; coat has a longer split skirt, not a larger body.
     const follow = hemFollow;
-    rect(tx - 1 + follow, hem - 3 + oy, tw + 2, 2, look.cloth);
-    rect(tx - 1 + follow, hem - 1 + oy, tw + 2, 1, look.cloth2);
+    rect(tx - 1 + follow, hem - 3 + oy, tw + 2, 2, baseCloth);
+    rect(tx - 1 + follow, hem - 1 + oy, tw + 2, 1, baseCloth2);
     if (garment === 'coat') rect(side ? 9 : 9 + follow, 21 + oy, 2, 3, look.pants);
   }
   if (look.apron && !back) {
@@ -393,6 +409,7 @@ function drawFrame(look: Look, facing: Facing, mode: Mode, phase: number): Paint
     if (garment === 'jacket') rect(tx, hem - 1 + oy, tw, 1, trim);
     else rect(tx - 1 + hemFollow, hem - 1 + oy, tw + 2, 1, trim);
   }
+  if (look.style) drawStyledTorso(look, { px, rect, side, back, torsoTop, tx, tw, oy, hemFollow, walking });
   if (!side) arm({x:15,y:shoulder}, handR, false);
   arm({x:side ? 5 : 3,y:shoulder}, handL, false);
 
@@ -451,6 +468,10 @@ function drawFrame(look: Look, facing: Facing, mode: Mode, phase: number): Paint
     case 'goggles':
       rect(faceX, headTop + 1, faceW, 2, INK);
       px(faceX + 1, headTop + 1, '#7fb2dd'); if (!side) px(faceX + 5, headTop + 1, '#7fb2dd');
+      break;
+    case 'visor':
+    case 'helmet':
+      drawStyledHead(look, { px, rect, side, back, headTop, faceX, faceW });
       break;
     default:
       break;
@@ -543,6 +564,113 @@ function drawFrame(look: Look, facing: Facing, mode: Mode, phase: number): Paint
 
   outline(p, INK);
   return p;
+}
+
+interface StyledDraw {
+  px: (x: number, y: number, c: string) => void;
+  rect: (x: number, y: number, w: number, h: number, c: string) => void;
+  side: boolean; back: boolean;
+}
+
+const GOLD = '#ffd36b';
+
+/** The coat, panels, bag and accessories of the 'operative' and 'crew' silhouettes. */
+function drawStyledTorso(look: Look, d: StyledDraw & { torsoTop: number; tx: number; tw: number; oy: number; hemFollow: number; walking: boolean }): void {
+  const { rect, px, side, back, torsoTop, tx, tw, oy, hemFollow } = d;
+  const prof = look.cloth;
+  const shell = look.shell ?? look.cloth;
+  const dark = shade(shell, 0.55);
+  const neon = look.accent ?? '#35e6ff';
+  const role = look.role ?? 'general';
+  if (look.style === 'operative') {
+    // Long coat: tails flare well past the hips and are edged with a neon line, so the figure reads as a tall wedge.
+    rect(tx - 2 + hemFollow, 20 + oy, tw + 4, 5, shell);
+    rect(tx - 2 + hemFollow, 24 + oy, tw + 4, 1, neon);
+    rect(tx - 2 + hemFollow, 23 + oy, tw + 4, 1, dark);
+    // Broad shoulder panels, then the chest stripe in the profile colour.
+    if (side) rect(tx, torsoTop - 1, 6, 3, prof);
+    else { rect(tx - 2, torsoTop - 1, 4, 3, prof); rect(tx + tw - 2, torsoTop - 1, 4, 3, prof); }
+    if (back) rect(tx + 1, torsoTop + 3, tw - 2, 9, prof);
+    else rect(tx + (side ? 4 : 3), torsoTop + 2, side ? 3 : 4, 11, prof);
+    if (!back) { rect(tx + (side ? 4 : 3), torsoTop + 2, side ? 3 : 4, 1, shade(prof, 1.25)); }
+    // Belt lights and a hip bag in the profile colour.
+    rect(tx, torsoTop + 7, tw, 1, dark);
+    px(tx + 1, torsoTop + 7, neon); px(tx + tw - 2, torsoTop + 7, neon);
+    if (!back) { rect(tx + tw - (side ? 0 : 1), torsoTop + 9, 3, 4, prof); rect(tx + tw - (side ? 0 : 1), torsoTop + 9, 3, 1, shade(prof, 0.7)); }
+    // Role accessories: visual only.
+    if (role === 'coordinator') { rect(tx - 2, torsoTop - 2, side ? 6 : 4, 1, GOLD); if (!side) rect(tx + tw - 2, torsoTop - 2, 4, 1, GOLD); }
+    else if (role === 'research' && !back) rect(tx + (side ? 0 : 1), torsoTop + 9, 4, 3, '#bfeaff');
+    else if (role === 'fabrication') rect(tx - (side ? 0 : 3), torsoTop + 5, 3, 2, '#ff8a3a');
+    else if (role === 'review' && !back) { px(tx + 1, torsoTop + 3, GOLD); px(tx + 2, torsoTop + 4, GOLD); }
+    else if (role === 'tooling' && !back) { for (let i = 0; i < 6; i++) px(tx + 1 + (i % 6), torsoTop + 2 + i, neon); }
+    return;
+  }
+  // 'crew': a pressure suit with the profile colour as the chest panel, shoulder patches and call-sign stripe.
+  if (back) {
+    // Back unit: the oxygen pack covers the back and carries the profile stripe.
+    rect(tx - 1, torsoTop + 1, tw + 2, 10, '#8c96a8');
+    rect(tx - 1, torsoTop + 1, tw + 2, 1, '#c3cbd8');
+    rect(tx + 1, torsoTop + 3, tw - 2, 4, prof);
+    rect(tx + 2, torsoTop + 8, 2, 3, '#555e70'); rect(tx + tw - 4, torsoTop + 8, 2, 3, '#555e70');
+  } else {
+    rect(tx + 1, torsoTop + 2, tw - 2, 7, prof);
+    rect(tx + 1, torsoTop + 2, tw - 2, 1, shade(prof, 1.25));
+    rect(tx + 2, torsoTop + 4, 3, 2, dark); px(tx + 3, torsoTop + 5, neon); px(tx + tw - 4, torsoTop + 5, '#ffd36b');
+    rect(tx, torsoTop + 10, tw, 1, prof);
+    if (side) rect(tx + tw, torsoTop + 1, 3, 10, '#8c96a8'); // pack behind the shoulder in profile
+    else { rect(tx - 2, torsoTop - 1, 2, 4, '#8c96a8'); rect(tx + tw, torsoTop - 1, 2, 4, '#8c96a8'); } // pack top either side of the neck
+  }
+  rect(tx, torsoTop, side ? 3 : 2, 2, prof); if (!side) rect(tx + tw - 2, torsoTop, 2, 2, prof); // shoulder patches
+  rect(tx, 18 + oy, tw, 1, dark); // belt
+  if (role === 'research') { rect(tx + tw, torsoTop - 4 - (side ? 0 : 1), 1, 5, '#bfeaff'); px(tx + tw, torsoTop - 5, neon); }
+  else if (role === 'fabrication') rect(tx - (side ? 0 : 2), 16 + oy, 3, 2, '#ff8a3a');
+  else if (role === 'review' && !back) rect(tx + tw - 4, torsoTop + 11, 4, 2, '#bfeaff');
+  else if (role === 'tooling' && !back) { for (let i = 0; i < 7; i++) px(tx + i, torsoTop + 1 + i, neon); }
+}
+
+/** The visor of an operative, or the round helmet of a crew member. */
+function drawStyledHead(look: Look, d: StyledDraw & { headTop: number; faceX: number; faceW: number }): void {
+  const { rect, px, side, back, headTop, faceX, faceW } = d;
+  const prof = look.cloth;
+  const role = look.role ?? 'general';
+  const neon = look.accent ?? '#35e6ff';
+  if (look.style === 'crew') {
+    const shell = look.shell ?? '#dfe5ee';
+    const shellDark = shade(shell, 0.78);
+    // A round helmet, wider and taller than a head: rows grow and shrink to a disc.
+    const widths = [faceW, faceW + 2, faceW + 4, faceW + 4, faceW + 4, faceW + 4, faceW + 4, faceW + 4, faceW + 4, faceW + 2, faceW + 2];
+    widths.forEach((w, i) => {
+      const x = faceX - (w - faceW) / 2;
+      rect(x, headTop - 2 + i, w, 1, i > 6 ? shellDark : shell);
+    });
+    if (!back) {
+      const gx = side ? faceX + 1 : faceX, gw = side ? faceW - 1 : faceW;
+      rect(gx, headTop + 1, gw, 7, '#142038');
+      rect(gx, headTop + 1, gw, 1, '#3a5a8a');
+      px(gx + 1, headTop + 2, '#9fd0ff'); px(gx + 2, headTop + 2, '#9fd0ff');
+      px(gx + 2, headTop + 5, '#ffd9a0'); if (!side) px(gx + gw - 3, headTop + 5, '#ffd9a0');
+    }
+    rect(faceX - 2, headTop + 9, faceW + 4, 2, prof); // helmet ring in the profile colour
+    rect(faceX - 2, headTop + 9, faceW + 4, 1, shade(prof, 1.2));
+    if (role === 'coordinator') { rect(faceX + 2, headTop - 3, faceW - 4, 1, GOLD); }
+    if (role === 'review' && !back) px(faceX + faceW + 1, headTop - 4, neon);
+    return;
+  }
+  // 'operative': a glowing visor band across the eyes, an earpiece, and a pair of collar wings that widen the neck.
+  const glow = shade(prof, 1.3);
+  if (!back) {
+    const vx = side ? faceX + 1 : faceX - 1, vw = side ? faceW - 1 : faceW + 2;
+    rect(vx - 1, headTop + 3, vw + 2, 5, '#10141f');
+    rect(vx, headTop + 4, vw, 3, glow);
+    rect(vx, headTop + 4, vw, 1, '#ffffff');
+  } else {
+    rect(faceX, headTop + 4, faceW, 1, glow);
+  }
+  rect(faceX - 1, headTop + 5, 1, 3, '#10141f'); px(faceX - 1, headTop + 5, neon);
+  rect(faceX - 2, headTop + 9, 2, 5, shade(look.shell ?? '#1b2236', 0.8));
+  rect(faceX + faceW, headTop + 9, 2, 5, shade(look.shell ?? '#1b2236', 0.8));
+  if (role === 'review') rect(faceX - 1, headTop - 4, 1, 4, neon);
+  if (role === 'coordinator') rect(faceX, headTop, faceW, 1, GOLD);
 }
 
 /** Small emote bubble sprites keyed by name. */

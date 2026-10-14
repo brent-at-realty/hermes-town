@@ -4,6 +4,7 @@ import type { TownSim } from '../sim/town';
 import type { TownMap } from '../world/map';
 import type { MinimapTone, UiPalette } from '../themes/types';
 import type { TownScene } from '../scenes/TownScene';
+import { paintWorldMinimap } from '../art/worlds';
 
 /** What the minimap needs from the running Town. All of it is read at draw time, so a map switch only swaps the getters' targets. */
 export interface MinimapSource {
@@ -56,6 +57,9 @@ export function createMinimap(canvas: HTMLCanvasElement, src: MinimapSource): { 
   let basePalette: MinimapPalette | null = null;
 
   const paintBase = (map: TownMap, p: MinimapPalette): HTMLCanvasElement => {
+    // A skinned world (towers and lifts, or bodies and docks) draws its own structure into the minimap.
+    const own = paintWorldMinimap(map, p.background);
+    if (own) return own;
     const w = map.grid.w, h = map.grid.h;
     const c = document.createElement('canvas');
     c.width = w; c.height = h;

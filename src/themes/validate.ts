@@ -2,6 +2,8 @@ import { hasPropArt } from '../art/propArt';
 import { PLACE_LABEL, type Place } from '../sim/toolMap';
 import { hasWorldSprite } from '../world/dressing';
 import { findPath } from '../world/pathfind';
+import { strayWalkable } from '../world/regions';
+import { validateTransit } from '../world/transit';
 import type { TownMap } from '../world/map';
 import { compatibleMaps, DEFAULT_THEME_ID, findKit, findMap, KITS, MAPS, THEMES } from './registry';
 import type { MapPreset, TownTheme, UiPalette } from './types';
@@ -42,13 +44,19 @@ export function validateTheme(theme: TownTheme): string[] {
   if (!Number.isInteger(e.clouds.count) || e.clouds.count < 0 || e.clouds.count > 24) at('cloud count must be an integer from 0 to 24');
   if (e.motes && (!Number.isInteger(e.motes.count) || e.motes.count < 0 || e.motes.count > 120 || !unit(e.motes.alpha))) at('motes must be 0-120 and alpha 0-1');
   if (theme.art.treeTints.length === 0) at('treeTints must not be empty');
+  if (theme.pack) {
+    const kit = findKit(theme.people), map = findMap(theme.maps.default);
+    if (!theme.pack.summary.trim() || !theme.pack.routeNote.trim()) at('a complete pack needs a summary and a route note');
+    if (!kit || !map) at('a complete pack needs a registered people kit and default map');
+    if (map && !map.routeNote) at('a complete pack whose map has transit must explain that its route animation is not a lifecycle signal');
+  }
   // No theme may reference a remote or arbitrary asset.
   const serialised = JSON.stringify(theme);
   if (/https?:|\/\/|url\(|data:|\.\.\//i.test(serialised)) at('themes may not reference urls, data uris or relative paths');
   return out;
 }
 
-export function validateMap(map: TownMap, preset: Pick<MapPreset, 'id' | 'view'>): string[] {
+export function validateMap(map: TownMap, preset: Pick<MapPreset, 'id' | 'view'> & Partial<Pick<MapPreset, 'routeNote'>>): string[] {
   const out: string[] = [];
   const at = (m: string) => out.push(`map ${preset.id}: ${m}`);
   const { w, h, cost } = map.grid;
@@ -73,7 +81,20 @@ export function validateMap(map: TownMap, preset: Pick<MapPreset, 'id' | 'view'>
     ...map.stations.map((s) => ({ id: `station ${s.id}`, tile: s.tile })),
     ...buildings.flatMap((b) => [{ id: `door ${b.id}`, tile: b.door }, ...b.porch.map((tile, i) => ({ id: `porch ${b.id}#${i}`, tile }))]),
   ];
-  for (const t of targets) if (!findPath(map.grid, map.entrance, t.tile)) at(`${t.id} is not reachable from the entrance`);
+  // Routing is by the map's own network when it has lifts or shuttles, and plain A* otherwise.
+  const reachable = (to: { x: number; y: number }) => (map.transit ? map.transit.route(map.entrance, to) : findPath(map.grid, map.entrance, to));
+  for (const t of targets) if (!reachable(t.tile)) at(`${t.id} is not reachable from the entrance`);
+  if (map.transit) {
+    out.push(...validateTransit(map.grid, map.entrance, map.transit.connectors, preset.id));
+    const preview = (preset as Partial<MapPreset>).routeNote;
+    if (!preview || !/not a separate Hermes lifecycle signal/.test(preview)) at('a map with transit must say its lifts or shuttles are not a lifecycle signal');
+  }
+  if (map.regions) {
+    const stray = strayWalkable(map.grid, map.regions);
+    if (stray.void.length > 0) at(`${stray.void.length} walkable tiles lie outside every authored region (void space must be blocked)`);
+    if (stray.sun.length > 0) at('the sun must not be walkable');
+  }
+  if (map.skin && !map.regions) at('a skinned world must declare its regions');
   for (const s of map.stations) {
     if (buildings.some((b) => s.tile.x >= b.x && s.tile.x < b.x + b.w && s.tile.y >= b.y && s.tile.y < b.y + b.h)) at(`station ${s.id} sits inside a building`);
   }
@@ -100,7 +121,7 @@ export function validateRegistry(): string[] {
     if (!ID.test(kit.id)) out.push(`people kit ${kit.id}: bad id`);
     if (!kit.preview.every(isColour)) out.push(`people kit ${kit.id}: preview swatches must be plain colours`);
     for (const list of [kit.hair, kit.cloth, kit.pants]) if (list && !list.every(isColour)) out.push(`people kit ${kit.id}: palettes must be plain colours`);
-    for (const c of [kit.trim, kit.hatColor, kit.plume, kit.sash, kit.hemBand, kit.sleeve]) if (c !== undefined && !/^#[0-9a-f]{6}$/i.test(c)) out.push(`people kit ${kit.id}: trim, hat, plume, sash and hem colours must be #rrggbb`);
+    for (const c of [kit.trim, kit.hatColor, kit.plume, kit.sash, kit.hemBand, kit.sleeve, kit.shell, kit.accent]) if (c !== undefined && !/^#[0-9a-f]{6}$/i.test(c)) out.push(`people kit ${kit.id}: trim, hat, plume, sash and hem colours must be #rrggbb`);
   }
   const tags = KITS.map((k) => k.textureTag);
   dupes('people kit texture tag', tags);

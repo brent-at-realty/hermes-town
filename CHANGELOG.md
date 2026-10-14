@@ -2,6 +2,18 @@
 
 All notable changes to Hermes Town Brent (formerly published as Hermes Town) are documented here.
 
+## Unreleased
+
+Version rationale: minor, presentation only. No wire protocol, plugin id, state layout, lifecycle or privacy change; the version is bumped at release.
+
+### Appearance: two complete world packs, Cyber City and Orbital System
+
+- **Complete packs.** Appearance gains one button per pack that sets the theme, its recommended people, its map and its environment together. The People, Map and Environment controls stay independent afterwards, and Classic, Night Market, Town, Greenwood and the three older people kits are unchanged. The map still waits for Apply, which reloads the renderer scene without touching Hermes, the bridge or any resident.
+- **Cyber City.** A neon cutaway district of four towers (Archive, Maker, Operations, Residential) over a street with an arcade. Every existing place has stations on a real tower floor; lifts join the floors. People: `Neon operatives`.
+- **Orbital System.** A bounded diorama: Helios Station, Mercury Lab, Forge Moon, Relay Garden and a sun, in empty space. Residents walk only on the bodies and the station; shuttles join the bodies. People: `Orbital crew`. Weather options read `Clear orbit`, `Nebula haze` and `Solar-particle field`; the stored values stay clear, mist and rain, so links and saved views keep working.
+- **Typed transit.** A `TransitConnector` (`lift` or `shuttle`) is a route segment for a resident who is already walking to a real mapped station. The route is walk, ride, walk. It never creates activity, never becomes a station, never changes a resident's lifecycle state, and is not part of the wire contract or persisted. Maps without connectors keep the original A* walking unchanged. Rides are drawn by a pooled layer beneath every name tag, bubble and emote; under reduced motion the car stands at the floor or the craft at the dock with a text cue.
+- **Verification.** `tests/verify-worlds.mjs` (part of `npm run test:contracts`) covers connectors, reachability, void space, routes, validation, the simulator on lifts and shuttles, and replay. `scripts/verify-transit-worlds.mjs` (`npm run verify:worlds`, part of `npm test`) drives a real browser through rides, reduced motion, the solar-particle weather, pack buttons, repeated map switching and Reset.
+
 ## 0.5.4 - 2026-10-14
 
 Version rationale: patch release; presentation only. No wire protocol, plugin id, state layout, lifecycle or privacy change.

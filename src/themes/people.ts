@@ -49,7 +49,60 @@ export const PLAINCLOTHES: PeopleKit = {
   preview: ['#6a6a72', '#58606a', '#6a6258', '#585868'],
 };
 
-export const PEOPLE_KITS: readonly PeopleKit[] = [TOWNSFOLK, MARKET_FOLK, PLAINCLOTHES];
+/**
+ * Cyber City: tall, wide-hemmed technical coats with a high collar, broad shoulder panels and a glowing visor.
+ * The coat is a dark shell; the profile colour is the chest stripe, both shoulder panels, the visor glow and the
+ * hip bag, so it is the loudest colour on the figure at the overview scale.
+ */
+export const NEON_OPERATIVES: PeopleKit = {
+  id: 'neon-operatives',
+  label: 'Neon operatives',
+  description: 'Long technical coats, high collars, shoulder panels and a glowing visor. The profile colour is the chest stripe, shoulders, visor and bag.',
+  textureTag: 'no',
+  style: 'operative',
+  hat: 'visor',
+  garment: 'coat',
+  apron: false,
+  beard: false,
+  belt: false,
+  satchel: false,
+  shell: '#1a2036',
+  sleeve: '#232b46',
+  accent: '#35e6ff',
+  trim: '#35e6ff',
+  hair: ['#10121c', '#3a1f5a', '#0d6a7a', '#5a1f3a', '#c9d3e6'],
+  cloth: ['#ff3fa4', '#35e6ff', '#ffd36b', '#8a5cff', '#3dff9a'],
+  pants: ['#10131f', '#151a2a'],
+  preview: ['#1a2036', '#35e6ff', '#ff3fa4', '#ffd36b'],
+};
+
+/**
+ * Orbital System: pressure suits with a round helmet and a back unit. The suit is pale; the profile colour is the
+ * broad chest panel, the helmet ring, the shoulder patches and the call-sign stripe.
+ */
+export const ORBITAL_CREW: PeopleKit = {
+  id: 'orbital-crew',
+  label: 'Orbital crew',
+  description: 'Pale pressure suits, a round helmet with a dark visor and a back unit. The profile colour is the chest panel, helmet ring, shoulder patches and call-sign stripe.',
+  textureTag: 'oc',
+  style: 'crew',
+  hat: 'helmet',
+  garment: 'jacket',
+  apron: false,
+  beard: false,
+  belt: false,
+  satchel: false,
+  shell: '#dfe5ee',
+  sleeve: '#cbd3e0',
+  accent: '#ffb347',
+  trim: '#9aa6bb',
+  hair: ['#2a2230'],
+  cloth: ['#ff7a3a', '#3fa7ff', '#ffd24a', '#6fd07a', '#e05a9a'],
+  pants: ['#aab4c4', '#b4bdcc'],
+  preview: ['#dfe5ee', '#ff7a3a', '#3fa7ff', '#ffd24a'],
+};
+
+export const PEOPLE_KITS: readonly PeopleKit[] = [TOWNSFOLK, MARKET_FOLK, PLAINCLOTHES, NEON_OPERATIVES, ORBITAL_CREW];
 
 /**
  * Restyle a look with a kit.
@@ -76,6 +129,9 @@ export function applyPeopleKit(look: Look, kit: PeopleKit, seed: string, profile
   if (kit.sash !== undefined) next.sash = kit.sash;
   if (kit.hemBand !== undefined) next.hemBand = kit.hemBand;
   if (kit.sleeve !== undefined) next.sleeve = kit.sleeve;
+  if (kit.style !== undefined) next.style = kit.style;
+  if (kit.shell !== undefined) next.shell = kit.shell;
+  if (kit.accent !== undefined) next.accent = kit.accent;
   if (kit.hair) next.hair = pick(kit.hair, 'hair');
   if (kit.pants) next.pants = pick(kit.pants, 'pants');
   if (kit.cloth) next.cloth = pick(kit.cloth, 'cloth');

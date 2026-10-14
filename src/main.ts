@@ -58,7 +58,7 @@ controller.subscribe(() => {
   applyUiPalette(next.ui);
   rt.apply(next);
 });
-const appearancePanel = createAppearancePanel({ controller, mountedMapId: () => rt.preset.id, reloadMap });
+const appearancePanel = createAppearancePanel({ controller, mountedMapId: () => rt.preset.id, mountedAtmosphere: () => rt.preset.atmosphere, reloadMap });
 
 function reloadMap(): void {
   selectedId = null;
@@ -115,7 +115,8 @@ function renderPanel(): void {
   const r = selectedId ? sim.residents.get(selectedId) : null;
   if (!r) { panel.hidden = true; return; }
   panel.hidden = false;
-  const place = r.place ? PLACE_LABEL[r.place] : r.state === 'leaving' ? 'going home' : r.state === 'waiting' ? 'at the front door' : r.state === 'posted' ? 'at its post' : r.state === 'returning' ? 'coming back' : 'on the road';
+  const ride = r.transit ? rt.map.transit?.byId(r.transit.connectorId) : undefined;
+  const place = ride ? (ride.kind === 'lift' ? 'in a lift (a route, not an event)' : 'on a shuttle (a route, not an event)') : r.place ? PLACE_LABEL[r.place] : r.state === 'leaving' ? 'going home' : r.state === 'waiting' ? 'at the front door' : r.state === 'posted' ? 'at its post' : r.state === 'returning' ? 'coming back' : 'on the road';
   const parent = r.parentId ? sim.residents.get(r.parentId) : null;
   const colour = profileColorFor(r.profile, r.profileSlot);
   const runnersOut = r.kind === 'session' ? sim.runners().filter((x) => x.parentId === r.id).length : 0;

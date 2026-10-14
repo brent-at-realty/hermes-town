@@ -6,6 +6,7 @@ import type { Place } from '../sim/toolMap';
 import type { Grid, Point } from './pathfind';
 import { buildCountryside } from './countryside';
 import { hasWorldSprite } from './dressing';
+import type { TransitNetwork } from './transit';
 
 /** The authored town, in its own local tile space. */
 export const LOCAL_W = 64;
@@ -23,7 +24,12 @@ export type PropKind =
   | 'firewood' | 'cart' | 'tools' | 'stoneMarker' | 'grave0' | 'grave1' | 'grave2' | 'deadTree' | 'clothesline' | 'shed'
   | 'fallenLog' | 'choppingBlock' | 'wheelbarrow' | 'beehive' | 'campfire' | 'shrine' | 'brokenWheel' | 'mailSacks' | 'parcels' | 'noticeBoard'
   | 'banner' | 'tavernSign' | 'lantern' | 'flowerBox' | 'planter' | 'timberPile' | 'sawhorse' | 'coalPile' | 'metalStack' | 'bridgePost'
-  | 'awning' | 'bookCrates' | 'fountain' | 'chapel' | 'sunflowers' | 'marketStall0' | 'marketStall1' | 'moonSign' | 'teapotSign' | 'hedge' | 'dock';
+  | 'awning' | 'bookCrates' | 'fountain' | 'chapel' | 'sunflowers' | 'marketStall0' | 'marketStall1' | 'moonSign' | 'teapotSign' | 'hedge' | 'dock'
+  // workstation props for the Cyber City and Orbital System worlds
+  | 'terminal' | 'fabBay' | 'foundryRig' | 'dispatchDock' | 'scopeArray' | 'commandConsole' | 'loungeSeat' | 'kiosk';
+
+/** Props a skill can claim as its own stall: the market stall and the kiosk of the sci-fi worlds. */
+export const STALL_KINDS: ReadonlySet<PropKind> = new Set<PropKind>(['stall', 'kiosk']);
 
 export interface Building {
   id: string;
@@ -46,6 +52,19 @@ export interface Station {
 
 export interface Prop { kind: PropKind; x: number; y: number; variant?: number; blocks?: Point[] }
 
+/** A named, authored walkable region or landmark: a tower deck, a moon, a station module, the sun. */
+export interface WorldRegion {
+  id: string;
+  label: string;
+  kind: 'street' | 'deck' | 'body' | 'sun';
+  /** Tile rectangle that bounds it. A disk is the ellipse inscribed in this rectangle. */
+  x: number; y: number; w: number; h: number;
+  shape: 'rect' | 'disk';
+}
+
+/** Which complete world a map is drawn as. Absent for the original town and its countryside variants. */
+export type WorldSkin = 'cyber-city' | 'orbital-system';
+
 export interface TownMap {
   ground: number[][];
   /** Terrain height 0..1 per tile, for tone and cloud shading. */
@@ -63,6 +82,14 @@ export interface TownMap {
   homes: Building[];
   lamps: Point[];
   entrance: Point;
+  /** Typed lift and shuttle connectors between separate walkable regions. Absent on maps that are one walkable region. */
+  transit?: TransitNetwork;
+  /** A map that is drawn by its own world pack rather than by the countryside painter. */
+  skin?: WorldSkin;
+  /** Authored regions of a skinned world, for its art, its minimap and its verification. */
+  regions?: WorldRegion[];
+  /** A world with no air. Its "rain" setting is drawn as a field of drifting solar particles, never as rain. */
+  vacuum?: boolean;
 }
 
 const inb = (x: number, y: number) => x >= 0 && y >= 0 && x < LOCAL_W && y < LOCAL_H;
