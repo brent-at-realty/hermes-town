@@ -28,7 +28,7 @@ export function createMinimap(canvas: HTMLCanvasElement, src: MinimapSource): { 
     const g = c.getContext('2d')!;
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       const t = map.ground[y]![x]!;
-      g.fillStyle = t === T.water || t === T.water2 || t === T.water3 ? p.water
+      g.fillStyle = t === T.water || t === T.water2 || t === T.water3 || t === T.waterLily0 || t === T.waterLily1 || t === T.waterStone ? p.water
         : t === T.cobble || t === T.cobble2 ? p.cobble
         : t === T.path || t === T.path2 || t === T.bridge ? p.path
         : t === T.trail || t === T.trail2 ? p.trail

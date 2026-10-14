@@ -2,6 +2,17 @@
 
 All notable changes to Hermes Town Brent (formerly published as Hermes Town) are documented here.
 
+## Unreleased
+
+### Appearance: people and map changes are now visible
+
+- **People kits restyle every resident visibly.** `Market folk` get a dark plum brimmed hat with a gold band and plume and a gold-edged coat; `Plain clothes` drop hats, aprons, beards, the satchel strap and the belt and gain a linen collar and hem. New optional kit fields (`trim`, `hatColor`, `plume`, `satchel`, `belt`) are validated by the registry. Trim is edging only: the profile colour stays the body colour, so a shared Town still reads by profile. Resident ids, state, place and history are unchanged by a kit switch.
+- **Greenwood is a materially different map.** Same streets, buildings, homes, stations and entrance (asserted), but a broad lake in the west meadow, denser groves, two orchards in offset rows, a hedgerow, flower glades, no parched grass, more trees and flowers inside the walls, a green map tone (`MapPreset.tone`) and a slightly wider opening view. `buildCountryside` takes an explicit style; the original Town map is byte-identical.
+- The minimap now counts lily and stone water tiles as water, so a lake no longer shows holes.
+- **Reset** now also rebuilds the default map when a different one is mounted.
+- A map chosen in the drawer but not yet applied no longer tints the mounted scene.
+- Verification: `tests/verify-themes.mjs` checks Greenwood's structure and the kit outfits; `npm run verify:appearance` checks rendered sprite sheets, controlled canvas pixels, minimap and canvas pixel change, reachability, and live rehydration of the same resident ids.
+
 ## 0.5.0 - 2026-10-14
 
 Version rationale: pre-1.0 semver; the distributable plugin identity (manifest name, install/enable/update/remove ids, install directory, metadata key) changes from `hermes-town` to `hermes-town-brent`, which is a breaking change for anyone scripting the old id, so the minor version is bumped. No runtime behaviour, wire protocol or state layout changes.

@@ -38,7 +38,8 @@ const t = await load(`
   export { NIGHT_MARKET } from './src/themes/nightMarket.ts';
   export { lookFor } from './src/art/characters.ts';
   export { PROP_ART, hasPropArt } from './src/art/propArt.ts';
-  export { buildTownMap } from './src/world/map.ts';
+  export { buildTownMap, buildGreenwoodMap } from './src/world/map.ts';
+  export { T } from './src/art/tiles.ts';
 `);
 
 let checks = 0;
@@ -192,6 +193,97 @@ ok('registered maps are distinct layouts of the same contract', () => {
   const a = t.findMap('town').build(), b = t.findMap('greenwood').build();
   assert.equal(a.grid.w, b.grid.w);
   assert.notDeepEqual(a.props.map((p) => [p.kind, p.x, p.y]), b.props.map((p) => [p.kind, p.x, p.y]));
+});
+const WATER = new Set([t.T.water, t.T.water2, t.T.water3, t.T.waterLily0, t.T.waterLily1, t.T.waterStone]);
+const census = (map) => {
+  let water = 0, flowers = 0, dry = 0;
+  const flw = new Set([t.T.flwWhite0, t.T.flwBlue0, t.T.flwYellow0, t.T.clover]);
+  const dryTiles = new Set([t.T.grassDry, t.T.grassDry2, t.T.seed0]);
+  for (const row of map.ground) for (const g of row) { if (WATER.has(g)) water += 1; else if (flw.has(g)) flowers += 1; else if (dryTiles.has(g)) dry += 1; }
+  const count = (kind) => map.props.filter((p) => p.kind === kind).length;
+  return { water, flowers, dry, trees: count('tree'), hedges: count('hedge') };
+};
+ok('Greenwood keeps the town\'s buildings, stations, homes and entrance exactly', () => {
+  const a = t.findMap('town').build(), b = t.findMap('greenwood').build();
+  assert.deepEqual(b.buildings, a.buildings);
+  assert.deepEqual(b.homes, a.homes);
+  assert.deepEqual(b.stations, a.stations);
+  assert.deepEqual(b.entrance, a.entrance);
+  assert.deepEqual(b.lamps.slice(0, a.lamps.length), a.lamps);
+});
+ok('Greenwood is materially different from Town: ground, water, woods, orchards, meadows and tone', () => {
+  const a = t.findMap('town').build(), b = t.findMap('greenwood').build();
+  let differing = 0;
+  for (let y = 0; y < a.grid.h; y++) for (let x = 0; x < a.grid.w; x++) if (a.ground[y][x] !== b.ground[y][x]) differing += 1;
+  assert.ok(differing / (a.grid.w * a.grid.h) > 0.3, `only ${differing} ground tiles differ`);
+  const ca = census(a), cb = census(b);
+  assert.ok(cb.water >= ca.water + 80, `water ${ca.water} -> ${cb.water}`);
+  assert.ok(cb.trees >= ca.trees + 60, `trees ${ca.trees} -> ${cb.trees}`);
+  assert.ok(cb.flowers > ca.flowers * 1.4, `flowers ${ca.flowers} -> ${cb.flowers}`);
+  assert.ok(cb.hedges > ca.hedges, `hedgerow ${ca.hedges} -> ${cb.hedges}`);
+  assert.equal(cb.dry, 0, 'Greenwood has no parched grass');
+  assert.ok(ca.dry > 0, 'the original town keeps its dry grass');
+  assert.notEqual(t.findMap('greenwood').tone, undefined);
+  assert.equal(t.findMap('town').tone, undefined);
+  assert.notDeepEqual(t.findMap('greenwood').view, t.findMap('town').view);
+});
+ok('Greenwood orchards stand in evenly spaced rows', () => {
+  const b = t.findMap('greenwood').build();
+  const trees = b.props.filter((p) => p.kind === 'tree').map((p) => ({ x: Math.round((p.x + 8) / 16), y: Math.round((p.y + 24) / 16) }));
+  const has = (x, y) => trees.some((p) => p.x === x && p.y === y);
+  let rows = 0;
+  for (const p of trees) if (has(p.x + 3, p.y) && has(p.x + 6, p.y) && has(p.x + 9, p.y) && has(p.x + 1, p.y + 3) && has(p.x + 4, p.y + 3)) rows += 1;
+  assert.ok(rows >= 4, `orchard rows found: ${rows}`);
+});
+ok('Greenwood is deterministic and the Town map is untouched by it', () => {
+  const first = t.findMap('greenwood').build(), second = t.findMap('greenwood').build();
+  assert.deepEqual([...first.grid.cost], [...second.grid.cost]);
+  assert.deepEqual(first.ground, second.ground);
+  assert.deepEqual(first.props, second.props);
+  assert.deepEqual(t.findMap('town').build().props, t.buildTownMap().props);
+});
+ok('Greenwood has no new tree, hedge, bench or lamp on a road, trail or bridge outside the town', () => {
+  const b = t.findMap('greenwood').build(), a = t.findMap('town').build();
+  const had = new Set(a.props.map((p) => `${p.kind}:${p.x}:${p.y}`));
+  const open = new Set([t.T.path, t.T.path2, t.T.bridge, t.T.trail, t.T.trail2]);
+  const inTown = (x, y) => x >= 26 && x < 90 && y >= 16 && y < 58;
+  let added = 0;
+  for (const p of b.props) {
+    if (!['tree', 'hedge', 'bench', 'lamp'].includes(p.kind) || had.has(`${p.kind}:${p.x}:${p.y}`)) continue;
+    added += 1;
+    for (const tile of p.blocks ?? []) if (!inTown(tile.x, tile.y)) assert.ok(!open.has(b.ground[tile.y][tile.x]), `${p.kind} at ${tile.x},${tile.y} blocks open ground`);
+  }
+  assert.ok(added > 100, `Greenwood adds its own dressing (${added})`);
+});
+
+// -------------------------------------------------------- people kit visuals
+ok('every non-default kit changes the visible outfit of every role, and keeps the profile colour', () => {
+  const roles = ['coordinator', 'research', 'fabrication', 'review', 'tooling', 'general', 'scheduled'];
+  const fields = ['hat', 'garment', 'apron', 'beard', 'belt', 'satchel', 'trim', 'hatColor', 'plume', 'pants', 'hair', 'cloth'];
+  for (const kitId of ['market-folk', 'plainclothes']) {
+    const kit = t.findKit(kitId);
+    for (const role of roles) for (const cloth of [undefined, '#2e6fd0']) {
+      const base = t.lookFor(`seed-${role}`, role, cloth);
+      const styled = t.applyPeopleKit(base, kit, `seed-${role}`, cloth);
+      const changed = fields.filter((f) => JSON.stringify(styled[f]) !== JSON.stringify(base[f]));
+      assert.ok(changed.length >= 3, `${kitId}/${role}: only ${changed} changed`);
+      if (cloth) assert.equal(styled.cloth, cloth);
+    }
+  }
+  const market = t.applyPeopleKit(t.lookFor('m', 'research'), t.findKit('market-folk'), 'm');
+  assert.deepEqual([market.hat, market.garment], ['brim', 'coat']);
+  assert.ok(market.trim && market.hatColor && market.plume);
+  const plain = t.applyPeopleKit(t.lookFor('p', 'fabrication'), t.findKit('plainclothes'), 'p');
+  assert.deepEqual([plain.hat, plain.garment, plain.apron, plain.beard, plain.belt, plain.satchel], ['none', 'tunic', false, false, false, false]);
+  const plainFab = t.lookFor('p', 'fabrication');
+  assert.equal(plainFab.apron, true, 'townsfolk fabricators keep their apron');
+});
+ok('the three kits produce three different looks for the same resident', () => {
+  for (const role of ['coordinator', 'fabrication', 'general']) {
+    const base = t.lookFor('same-resident', role, '#c0392b');
+    const looks = ['townsfolk', 'market-folk', 'plainclothes'].map((id) => JSON.stringify(t.applyPeopleKit(base, t.findKit(id), 'same-resident', '#c0392b')));
+    assert.equal(new Set(looks).size, 3, role);
+  }
 });
 
 // ---------------------------------------------------------------- preferences

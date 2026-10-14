@@ -115,6 +115,16 @@ export interface PeopleKit {
   garment?: 'jacket' | 'tunic' | 'coat';
   apron?: boolean;
   beard?: boolean;
+  /** Collar, lapel, hem and hat-band colour. It never replaces the body colour, so a profile colour still reads. */
+  trim?: string;
+  /** Colour of the brimmed hat. */
+  hatColor?: string;
+  /** Colour of a feather in the hat. */
+  plume?: string;
+  /** Draw the satchel strap (default) or leave it off. */
+  satchel?: boolean;
+  /** Draw the belt (default) or leave it off. */
+  belt?: boolean;
   /** Preview swatches. */
   preview: readonly string[];
 }
@@ -134,6 +144,12 @@ export interface MapPreset {
   description: string;
   build(): import('../world/map').TownMap;
   view: MapView;
+  /**
+   * Optional colour multiplier folded into the terrain and tree tints on top of
+   * the theme's own. 0xffffff (or absent) leaves them alone. It is what makes a
+   * map's own character (greener, drier) readable at a glance.
+   */
+  tone?: number;
 }
 
 export interface Choice {

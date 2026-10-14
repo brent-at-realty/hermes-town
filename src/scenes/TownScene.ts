@@ -20,6 +20,12 @@ import type { MapView } from '../themes/types';
 
 const ZOOMS = [1, 1.5, 2, 3, 4, 5];
 
+/** Channel-wise product of two 0xRRGGBB tints. */
+function multiplyTint(a: number, b: number): number {
+  const ch = (shift: number) => Math.round((((a >> shift) & 255) * ((b >> shift) & 255)) / 255);
+  return (ch(16) << 16) | (ch(8) << 8) | ch(0);
+}
+
 interface ResidentView {
   sprite: Phaser.GameObjects.Sprite;
   shadow: Phaser.GameObjects.Image;
@@ -57,6 +63,8 @@ export interface SceneOptions {
 export class TownScene extends Phaser.Scene {
   private opts!: SceneOptions;
   private app!: ResolvedAppearance;
+  /** The mounted map's own tone. A map chosen in the drawer but not yet applied must not tint this scene. */
+  private mapTone = 0xffffff;
   private mapW = 0;
   private mapH = 0;
   private views = new Map<string, ResidentView>();
@@ -105,6 +113,7 @@ export class TownScene extends Phaser.Scene {
   init(opts: SceneOptions): void {
     this.opts = opts;
     this.app = opts.appearance;
+    this.mapTone = opts.appearance.map.tone ?? 0xffffff;
     this.mapW = opts.map.grid.w;
     this.mapH = opts.map.grid.h;
   }
@@ -311,9 +320,10 @@ export class TownScene extends Phaser.Scene {
   /** Tints, shadows and label colours: everything that is a property of the static scene. */
   private paintTheme(): void {
     const { art, ui } = this.app;
-    for (const img of this.terrainImages) img.setTint(art.worldTint);
+    const tone = this.mapTone;
+    for (const img of this.terrainImages) img.setTint(multiplyTint(art.worldTint, tone));
     for (const img of this.buildingImages) img.setTint(art.buildingTint);
-    for (const t of this.treeImages) t.img.setTint(art.treeTints[t.variation % art.treeTints.length]!);
+    for (const t of this.treeImages) t.img.setTint(multiplyTint(art.treeTints[t.variation % art.treeTints.length]!, tone));
     for (const s of this.shadows) s.img.setAlpha(s.alpha * art.shadow);
     for (const label of this.sceneLabels) label.setColor(ui.scene.label).setBackgroundColor(ui.scene.labelBackground);
     for (const label of this.stallLabels.values()) label.setColor(ui.scene.stallLabel).setBackgroundColor(ui.scene.labelBackground);

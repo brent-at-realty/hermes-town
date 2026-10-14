@@ -1,8 +1,11 @@
-import { buildTownMap } from '../world/map';
+import { buildGreenwoodMap, buildTownMap } from '../world/map';
 import type { MapPreset, MapView } from './types';
 
 /** The overview framing the original town has always used. */
 const TOWN_VIEW: MapView = { centerX: 52, centerY: 40, fitW: 90, fitH: 50 };
+
+/** Greenwood frames a slightly wider, taller span so the lake, the orchards and the glade are in the opening view. */
+const GREENWOOD_VIEW: MapView = { centerX: 52, centerY: 41, fitW: 96, fitH: 54 };
 
 /**
  * Registered world maps. A map is a factory for the existing `TownMap`
@@ -22,8 +25,9 @@ export const MAP_PRESETS: readonly MapPreset[] = [
   {
     id: 'greenwood',
     label: 'Greenwood',
-    description: 'The same streets and buildings, with groves and countryside laid out differently.',
-    build: () => buildTownMap(1),
-    view: TOWN_VIEW,
+    description: 'The same streets and buildings, in a greener setting: a broad lake, dense groves, orchards in rows and flower glades.',
+    build: () => buildGreenwoodMap(),
+    view: GREENWOOD_VIEW,
+    tone: 0xd6f0d2,
   },
 ];

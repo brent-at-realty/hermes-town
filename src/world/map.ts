@@ -80,7 +80,12 @@ function stroke(points: Point[], width: number, put: (x: number, y: number) => v
   }
 }
 
-export function buildTownLocal(seed = 4321): TownMap {
+/** Dressing knobs for the authored town. The defaults reproduce the original town exactly. */
+export interface LocalDressing { treeTarget?: number; flowerClusters?: number }
+
+export function buildTownLocal(seed = 4321, dressing: LocalDressing = {}): TownMap {
+  const treeTarget = dressing.treeTarget ?? 190;
+  const flowerClusters = dressing.flowerClusters ?? 120;
   const r = mulberry(seed);
   const ground: number[][] = [];
   for (let y = 0; y < LOCAL_H; y++) {
@@ -197,7 +202,7 @@ export function buildTownLocal(seed = 4321): TownMap {
   for (let x = 23; x <= 26; x++) ground[26]![x] = T.fence;
   for (let y = 27; y <= 29; y++) ground[y]![26] = T.fenceV;
   // scattered ground detail, in loose clusters
-  for (let i = 0; i < 120; i++) {
+  for (let i = 0; i < flowerClusters; i++) {
     const cx = Math.floor(r() * LOCAL_W), cy = Math.floor(r() * LOCAL_H);
     const kind = r();
     for (let k = 0; k < 4; k++) {
@@ -425,7 +430,7 @@ export function buildTownLocal(seed = 4321): TownMap {
   // ---- trees: thick at the edges, sparse inside, never on roads or near doors
   let placed = 0, tries = 0;
   const treeCells = new Set<number>();
-  while (placed < 190 && tries++ < 30000) {
+  while (placed < treeTarget && tries++ < 30000) {
     const x = 1 + Math.floor(r() * (LOCAL_W - 2)), y = 2 + Math.floor(r() * (LOCAL_H - 3));
     const edge = x < 5 || x > LOCAL_W - 7 || y < 5 || y > LOCAL_H - 5;
     if (r() > (edge ? 0.95 : 0.4)) continue;
@@ -470,6 +475,17 @@ export function buildTownLocal(seed = 4321): TownMap {
 /** The town embedded in its countryside. */
 export function buildTownMap(variant = 0): TownMap {
   return buildCountryside(buildTownLocal(variant === 0 ? 4321 : 4321 + variant * 17), variant);
+}
+
+/**
+ * Greenwood: the same streets, buildings, stations and homes as the town, in a
+ * visibly different setting: a large lake, dense groves, orchards, flower
+ * meadows and glades instead of dry open fields, and more trees inside the
+ * walls. Everything it adds is dressing; navigation and station semantics
+ * come from the same authored town.
+ */
+export function buildGreenwoodMap(): TownMap {
+  return buildCountryside(buildTownLocal(4355, { treeTarget: 270, flowerClusters: 240 }), 1, 'greenwood');
 }
 
 export function tileCenter(p: Point): { x: number; y: number } {
