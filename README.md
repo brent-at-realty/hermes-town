@@ -192,8 +192,8 @@ cloud shadows, weather, haze and the drifting motes are decoration and never
 mean work, success, failure, or a resident.
 
 - **Theme**: preset cards. `Classic` is the default and the unchanged original look. `Night Market` is the same streets under lantern light, with its own HUD palette, people and colour grade.
-- **People**: the resident kit (`Townsfolk`, `Market folk`, `Plain clothes`). A kit restyles the figure; in a shared Town the profile clothing colour is applied last, so profile identification (legend, inspector, minimap) is the same in every kit.
-- **Map**: the maps a theme can host (`Town`, `Greenwood`). Both use the same buildings and tool-to-place table.
+- **People**: the resident kit (`Townsfolk`, `Market folk`, `Plain clothes`). A kit restyles the figure and every resident's art is rebuilt when you choose one: `Townsfolk` keeps the role clothes, hats and aprons; `Market folk` wear a dark plum brimmed hat with a gold band and a pink plume and a long coat edged in gold; `Plain clothes` are bare-headed in an apron-free tunic with a linen collar, with no satchel strap or belt. The resident's identity, state and history do not change. In a shared Town the profile clothing colour is applied last and stays the body colour in every kit, so profile identification (legend, inspector, minimap) is the same everywhere.
+- **Map**: the maps a theme can host (`Town`, `Greenwood`). Both use exactly the same buildings, homes, stations and tool-to-place table. `Greenwood` dresses the land differently: a broad lake in the west meadow, denser groves, two orchards in rows, a hedgerow, flower glades and lush green grass, under a green tone and a slightly wider opening view. The minimap draws the mounted map.
 - **Environment**: time of day (follow the clock, morning, midday, evening, night), weather (clear, mist, rain; decoration only), and motion.
 - **Reset**, **Save as my view**, **Copy share link**.
 
@@ -203,7 +203,8 @@ different **map** reloads the renderer scene, and the drawer says so first: a
 simulator is built for the new grid and, in live mode, re-reads the server's
 current snapshot, so the same residents come back. Nothing is sent to the
 server and Hermes is not restarted; in demo mode the scripted demo starts over.
-Selection and follow are cleared by a reload.
+Selection and follow are cleared by a reload. **Reset** returns to the default
+look and, if a different map is showing, rebuilds the default map the same way.
 
 **Where the choice lives.** Appearance is per browser. *Save as my view* writes
 a versioned record (`hermes-town.appearance`, schema `v: 1`) to this browser's
@@ -273,7 +274,7 @@ npm run verify:appearance
 hermes plugins doctor integrations/hermes-town-plugin --ci
 ```
 
-`test:contracts` checks the plugin privacy allowlist, the real HTTP server contract, cron keeper pre-registration, the shared Town, and the theme, people-kit and map registries (including preference and share-link parsing). `verify:appearance` drives the Appearance drawer in Chromium against the production build: keyboard access, live preview, save/reset, share links, invalid-link fallback, reduced motion, map reload, and live and disconnected integrity. Run `npm run build` first. `verify:characters` checks neutral arm symmetry, tool visibility, sprite bounds, distance-driven gait, workstation transitions, and event-driven reactions in Chromium. `verify:world` exercises navigation, resident lifecycle behavior, camera controls, offline-live honesty, and visual captures in Chromium.
+`test:contracts` checks the plugin privacy allowlist, the real HTTP server contract, cron keeper pre-registration, the shared Town, and the theme, people-kit and map registries (including preference and share-link parsing). `verify:appearance` drives the Appearance drawer in Chromium against the production build: keyboard access, live preview, save/reset, share links, invalid-link fallback, reduced motion, map reload, and live and disconnected integrity. It also proves the rendered result and not only the resolved choice: every resident's sprite sheet differs between the three people kits (and returns exactly), a controlled canvas crop of a resident differs between kits, the profile colour stays on the sprite, resident ids and history are unchanged, Greenwood differs from Town in structure, minimap pixels and canvas pixels while every station stays reachable and the buildings stay where they were, and live residents are rehydrated with the same ids after a map rebuild. Run `npm run build` first. `verify:characters` checks neutral arm symmetry, tool visibility, sprite bounds, distance-driven gait, workstation transitions, and event-driven reactions in Chromium. `verify:world` exercises navigation, resident lifecycle behavior, camera controls, offline-live honesty, and visual captures in Chromium.
 
 For character review, run `npm run build && node scripts/capture-characters.mjs`. It exports sprite atlases and captures the production renderer using explicitly scripted events, with live endpoints blocked. Images and metadata are saved under `output/playwright/characters/`; these are test fixtures, not live Hermes activity.
 

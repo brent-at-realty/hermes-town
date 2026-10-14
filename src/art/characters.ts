@@ -94,6 +94,14 @@ export interface Look {
   garment?: 'jacket' | 'tunic' | 'coat';
   beard: boolean;
   belt: boolean;
+  /** Edging colour for collar, lapels, hem and the hat band. Absent for the original look. */
+  trim?: string;
+  /** Replaces the default straw hat colour of the brimmed hat. */
+  hatColor?: string;
+  /** A feather in the hat. */
+  plume?: string;
+  /** The diagonal satchel strap. Drawn unless this is exactly false. */
+  satchel?: boolean;
 }
 
 /** A stable look from a stable id, nudged by role so jobs read at a glance. A profile colour, when given, replaces the role's cloth. */
@@ -317,6 +325,7 @@ function drawFrame(look: Look, facing: Facing, mode: Mode, phase: number): Paint
   const garment = look.garment ?? (look.apron ? 'coat' : 'tunic');
   const hem = garment === 'jacket' ? 19 : garment === 'tunic' ? 21 : 24;
   const tx = side ? 6 : 5, tw = side ? 8 : 10;
+  const hemFollow = walking ? [0,0,-1,-1,0,0,1,1][phase]! : 0;
   rect(tx, torsoTop, tw, hem - 12, look.cloth);
   rect(tx + tw - 2, torsoTop + 1, 2, hem - 13, look.cloth2);
   if (garment === 'jacket') {
@@ -326,7 +335,7 @@ function drawFrame(look: Look, facing: Facing, mode: Mode, phase: number): Paint
     if (!back) { rect(side ? 6 : 8, 13 + oy, 1, 3, look.cloth2); rect(side ? 7 : 11, 13 + oy, 1, 2, look.cloth2); }
   } else {
     // Tunic flares once; coat has a longer split skirt, not a larger body.
-    const follow = walking ? [0,0,-1,-1,0,0,1,1][phase]! : 0;
+    const follow = hemFollow;
     rect(tx - 1 + follow, hem - 3 + oy, tw + 2, 2, look.cloth);
     rect(tx - 1 + follow, hem - 1 + oy, tw + 2, 1, look.cloth2);
     if (garment === 'coat') rect(side ? 9 : 9 + follow, 21 + oy, 2, 3, look.pants);
@@ -337,18 +346,32 @@ function drawFrame(look: Look, facing: Facing, mode: Mode, phase: number): Paint
     rect(side ? 6 : 7, torsoTop + 10, side ? 5 : 6, 1, APRON_DARK);
   }
   const follow = walking ? [0,1,1,0,0,-1,-1,0][phase]! : 0;
-  if (!side) {
-    for (let i = 0; i < 7; i++) px(back ? 6 + i : 13 - i, torsoTop + i, STRAP);
-    rect(back ? 13 : 4, torsoTop + 6 + follow, 3, 3, STRAP);
-    px(back ? 14 : 5, torsoTop + 6 + follow, HAT);
-  } else {
-    rect(11, torsoTop, 2, 7, STRAP);
-    rect(12, torsoTop + 6 + follow, 3, 3, STRAP);
-    px(13, torsoTop + 6 + follow, HAT);
+  if (look.satchel !== false) {
+    if (!side) {
+      for (let i = 0; i < 7; i++) px(back ? 6 + i : 13 - i, torsoTop + i, STRAP);
+      rect(back ? 13 : 4, torsoTop + 6 + follow, 3, 3, STRAP);
+      px(back ? 14 : 5, torsoTop + 6 + follow, HAT);
+    } else {
+      rect(11, torsoTop, 2, 7, STRAP);
+      rect(12, torsoTop + 6 + follow, 3, 3, STRAP);
+      px(13, torsoTop + 6 + follow, HAT);
+    }
   }
   if (look.belt) {
     rect(tx, torsoTop + 6, tw, 1, STRAP);
     if (!back) rect(side ? 8 : 9, torsoTop + 6, side ? 1 : 2, 1, BUCKLE);
+  }
+  if (look.trim) {
+    // Collar, lapels and hem in the kit's edging colour. The body colour is untouched.
+    const trim = look.trim;
+    if (!back) {
+      rect(tx + (side ? 0 : 2), torsoTop, tw - (side ? 0 : 4), 1, trim);
+      if (garment !== 'tunic') { rect(tx, torsoTop, 1, hem - 14, trim); if (!side) rect(tx + tw - 1, torsoTop, 1, hem - 14, trim); }
+      else if (!side) { px(tx + 4, torsoTop + 1, trim); px(tx + 5, torsoTop + 1, trim); }
+    }
+    // The hem line follows the garment's own sway; a jacket has no flare, so its edge stays on the torso.
+    if (garment === 'jacket') rect(tx, hem - 1 + oy, tw, 1, trim);
+    else rect(tx - 1 + hemFollow, hem - 1 + oy, tw + 2, 1, trim);
   }
   if (!side) arm({x:15,y:shoulder}, handR, false);
   arm({x:side ? 5 : 3,y:shoulder}, handL, false);
@@ -382,13 +405,16 @@ function drawFrame(look: Look, facing: Facing, mode: Mode, phase: number): Paint
   }
   const brimY = headTop + 1;
   switch (look.hat) {
-    case 'brim':
-      rect(side ? 1 : 2, brimY, side ? 17 : 16, 2, HAT);
-      rect(side ? 1 : 2, brimY + 1, side ? 17 : 16, 1, HAT_DARK);
-      rect(5, headTop - 2, 10, 3, HAT);
-      rect(5, headTop - 2, 10, 1, shade(HAT, 1.15));
-      rect(5, headTop, 10, 1, HAT_DARK);
+    case 'brim': {
+      const hat = look.hatColor ?? HAT, hatDark = look.hatColor ? shade(hat, 0.7) : HAT_DARK, hatLight = shade(hat, 1.15);
+      rect(side ? 1 : 2, brimY, side ? 17 : 16, 2, hat);
+      rect(side ? 1 : 2, brimY + 1, side ? 17 : 16, 1, hatDark);
+      rect(5, headTop - 2, 10, 3, hat);
+      rect(5, headTop - 2, 10, 1, hatLight);
+      rect(5, headTop, 10, 1, look.trim ?? hatDark);
+      if (look.plume) { rect(12, headTop - 4, 2, 3, look.plume); px(13, headTop - 5, look.plume); px(11, headTop - 3, shade(look.plume, 0.7)); }
       break;
+    }
     case 'cap':
       rect(faceX - 1, headTop - 1, faceW + 2, 3, look.cloth2);
       if (side) rect(faceX - 3, headTop + 1, 3, 1, look.cloth2); else rect(faceX - 1, headTop + 2, faceW + 2, 1, look.cloth2);

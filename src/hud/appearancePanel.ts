@@ -80,7 +80,14 @@ export function createAppearancePanel(deps: PanelDeps): { toggle(): void; open()
   map.addEventListener('change', () => { controller.update({ map: map.value }); say('Map chosen. Reload the scene to show it.'); });
   $('#ap-map-apply').addEventListener('click', () => { deps.reloadMap(); say(`Renderer scene reloaded with ${controller.resolved().map.label}. Hermes was not restarted.`); });
 
-  $('#ap-reset').addEventListener('click', () => { controller.reset(); say('Reset to the default look. Your saved view was cleared.'); });
+  $('#ap-reset').addEventListener('click', () => {
+    controller.reset();
+    // Reset is an explicit request for the default view, and the default view includes its map.
+    if (controller.resolved().map.id !== deps.mountedMapId()) {
+      deps.reloadMap();
+      say(`Reset to the default look and rebuilt the ${controller.resolved().map.label} map. Your saved view was cleared. Hermes was not restarted.`);
+    } else say('Reset to the default look. Your saved view was cleared.');
+  });
   $('#ap-save').addEventListener('click', () => { say(controller.save() ? 'Saved as your view for this browser.' : 'This browser would not store it. The view still works until you reload.'); });
   $('#ap-copy').addEventListener('click', async () => {
     const url = controller.link();

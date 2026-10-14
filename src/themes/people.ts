@@ -17,6 +17,9 @@ export const MARKET_FOLK: PeopleKit = {
   textureTag: 'mf',
   hat: 'brim',
   garment: 'coat',
+  trim: '#d9b34a',
+  hatColor: '#3a2548',
+  plume: '#d6456a',
   hair: ['#1c1428', '#4a2a40', '#8a4a2a', '#c9a35a', '#d8d0e8'],
   cloth: ['#7a2a4a', '#2a5a6a', '#6a3a8a', '#9a6a2a', '#2a4a7a', '#8a2a2a'],
   pants: ['#2a2040', '#3a2a50', '#2a2a3a'],
@@ -32,6 +35,9 @@ export const PLAINCLOTHES: PeopleKit = {
   garment: 'tunic',
   apron: false,
   beard: false,
+  satchel: false,
+  belt: false,
+  trim: '#e6dcc4',
   cloth: ['#6a6a72', '#58606a', '#6a6258', '#585868'],
   preview: ['#6a6a72', '#58606a', '#6a6258', '#585868'],
 };
@@ -54,6 +60,11 @@ export function applyPeopleKit(look: Look, kit: PeopleKit, seed: string, profile
   if (kit.garment !== undefined) next.garment = kit.garment;
   if (kit.apron !== undefined) next.apron = kit.apron;
   if (kit.beard !== undefined) next.beard = kit.beard;
+  if (kit.trim !== undefined) next.trim = kit.trim;
+  if (kit.hatColor !== undefined) next.hatColor = kit.hatColor;
+  if (kit.plume !== undefined) next.plume = kit.plume;
+  if (kit.satchel !== undefined) next.satchel = kit.satchel;
+  if (kit.belt !== undefined) next.belt = kit.belt;
   if (kit.hair) next.hair = pick(kit.hair, 'hair');
   if (kit.pants) next.pants = pick(kit.pants, 'pants');
   if (kit.cloth) next.cloth = pick(kit.cloth, 'cloth');

@@ -55,6 +55,84 @@ const ingest = (base, events) => fetch(`${base}/api/town/ingest`, { method: 'POS
 let serial = 0;
 const ev = (key, kind, extra = {}) => ({ id: `appearance_${String(++serial).padStart(6, '0')}`, key, kind, ...extra });
 
+// ---- rendered-difference helpers: these read what is actually drawn, not the resolved state.
+let calc = null;
+const imageDiff = async (a, b, tolerance = 24) => {
+  calc ??= await browser.newPage();
+  return calc.evaluate(async ([x, y, tol]) => {
+    const load = (b64) => new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => { const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const g = c.getContext('2d'); g.drawImage(img, 0, 0); resolve(g.getImageData(0, 0, img.width, img.height)); };
+      img.onerror = reject;
+      img.src = `data:image/png;base64,${b64}`;
+    });
+    const A = await load(x), B = await load(y);
+    if (A.width !== B.width || A.height !== B.height) return { ratio: 1, sameSize: false };
+    let n = 0;
+    for (let i = 0; i < A.data.length; i += 4) if (Math.abs(A.data[i] - B.data[i]) > tol || Math.abs(A.data[i + 1] - B.data[i + 1]) > tol || Math.abs(A.data[i + 2] - B.data[i + 2]) > tol) n += 1;
+    return { ratio: n / (A.width * A.height), sameSize: true };
+  }, [a.toString('base64'), b.toString('base64'), tolerance]);
+};
+/** What each rendered resident's sprite sheet actually contains, by resident id. */
+const artState = (page) => page.evaluate(() => {
+  const s = window.__town.runtime.scene();
+  const hash = (data) => { let h = 2166136261; for (let i = 0; i < data.length; i++) h = Math.imul(h ^ data[i], 16777619); return h >>> 0; };
+  const out = {};
+  for (const [id, v] of s.views) {
+    const img = s.textures.get(v.key).getSourceImage();
+    const g = img.getContext('2d');
+    const idle = g.getImageData(0, 80, 32, 40).data; // frame 32: idle, facing down
+    const count = (r, gr, b) => { let n = 0; for (let i = 0; i < idle.length; i += 4) if (idle[i] === r && idle[i + 1] === gr && idle[i + 2] === b && idle[i + 3] === 255) n += 1; return n; };
+    const profileBlue = count(46, 111, 208);
+    // exact kit colours on the sprite: the plume and hat of Market folk, the linen collar of Plain clothes
+    const marks = { plume: count(0xd6, 0x45, 0x6a), marketHat: count(0x3a, 0x25, 0x48), linen: count(0xe6, 0xdc, 0xc4), gold: count(0xd9, 0xb3, 0x4a) };
+    out[id] = { key: v.key, sheet: hash(g.getImageData(0, 0, img.width, img.height).data), idle: hash(idle), profileBlue, marks };
+  }
+  return out;
+});
+/** The identity-and-history facts a theme must never change. */
+const residentFacts = (page) => page.evaluate(() => [...window.__town.sim.residents.values()].map((r) => ({
+  id: r.id, kind: r.kind, role: r.role, name: r.name, parentId: r.parentId, profile: r.profile, profileSlot: r.profileSlot,
+  home: r.home.label, history: r.history.map((h) => h.text), lifecycleState: r.state === 'gone' ? 'gone' : 'present',
+})).sort((a, b) => (a.id < b.id ? -1 : 1)));
+/** A structural signature of the mounted map. */
+const mapState = (page) => page.evaluate(() => {
+  const t = window.__town, m = t.map, { w, h, cost } = m.grid;
+  const hash = (list) => { let x = 2166136261; for (const n of list) x = Math.imul(x ^ n, 16777619); return x >>> 0; };
+  const ground = hash(m.ground.flat());
+  const props = hash(m.props.flatMap((p) => [p.x, p.y, p.variant ?? 0, p.kind.length]));
+  const seen = new Uint8Array(w * h), queue = [m.entrance.y * w + m.entrance.x];
+  seen[queue[0]] = 1;
+  for (let i = 0; i < queue.length; i++) {
+    const c = queue[i], x = c % w, y = Math.floor(c / w);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h || seen[ny * w + nx] || cost[ny * w + nx] === 0) continue;
+      seen[ny * w + nx] = 1; queue.push(ny * w + nx);
+    }
+  }
+  const at = (p) => seen[p.y * w + p.x] === 1;
+  const buildings = [...m.buildings, ...m.homes];
+  return {
+    preset: t.runtime.preset.id, ground, props, trees: m.props.filter((p) => p.kind === 'tree').length, hedges: m.props.filter((p) => p.kind === 'hedge').length,
+    unreachable: [...m.stations.filter((s) => !at(s.tile)).map((s) => s.id), ...buildings.filter((b) => !at(b.door)).map((b) => b.id), ...buildings.flatMap((b) => b.porch.filter((p) => !at(p)).map(() => `${b.id}-porch`))],
+    stations: m.stations.length, places: [...new Set(m.stations.map((s) => s.place))].sort(),
+    layout: hash([...m.buildings, ...m.homes].flatMap((b) => [b.x, b.y, b.w, b.h, b.door.x, b.door.y]).concat(m.stations.flatMap((s) => [s.tile.x, s.tile.y]), [m.entrance.x, m.entrance.y])),
+  };
+});
+const minimapPixels = (page) => page.evaluate(() => { const c = document.querySelector('#minimap'); return c.toDataURL('image/png').split(',')[1]; });
+const canvasShot = (page) => bare(page, () => page.locator('#game canvas').screenshot());
+/** Run a capture with every HUD element hidden, so the pixels are the Town canvas alone. */
+const bare = async (page, fn) => {
+  await page.evaluate(() => {
+    if (!document.getElementById('bare-style')) { const s = document.createElement('style'); s.id = 'bare-style'; s.textContent = 'html.bare body > *:not(#game){visibility:hidden !important}'; document.head.append(s); }
+    document.documentElement.classList.add('bare');
+  });
+  try { return await fn(); } finally { await page.evaluate(() => document.documentElement.classList.remove('bare')); }
+};
+const frozen = (page) => page.evaluate(() => { const t = window.__town; t.source.stop(); t.sim.update = () => {}; t.sim.push = () => {}; });
+const hasKit = (page, tag) => page.waitForFunction((tg) => { const v = [...window.__town.runtime.scene().views.values()]; return v.length > 0 && v.every((x) => (tg === '' ? !/-(mf|pc)$/.test(x.key) : x.key.endsWith(`-${tg}`))); }, tag, { timeout: 30000 });
+
 try {
   const { port } = await town.listen(0);
   const base = `http://127.0.0.1:${port}`;
@@ -246,6 +324,167 @@ try {
     await ctx.close();
   }
 
+  // ============================================ rendered appearance, demo mode
+  // What is drawn must change, not only what the resolver reports. The simulator is frozen
+  // for the measurements so a resident does not walk out of the frame between captures.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1672, height: 940 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => errors.push(`rendered-demo: ${e.message}`));
+    await page.goto(`${base}/?agents=demo&hour=12&motion=reduced`);
+    await ready(page);
+    await page.waitForFunction(() => window.__town.sim.residents.size > 0, null, { timeout: 30000 });
+    await page.evaluate(() => {
+      const sim = window.__town.sim;
+      const spawn = (n, role, extra = {}) => sim.push({ id: `render-${n}`, agentId: `h/main/renderprobe${String(n).padStart(2, '0')}`, seq: 1, at: sim.now(), type: 'agent.spawned', role, displayName: `probe ${n}`, ...extra });
+      spawn(1, 'coordinator', { profile: 'work', paletteSlot: 1 });
+      spawn(2, 'fabrication');
+      spawn(3, 'research');
+    });
+    await page.waitForFunction(() => [...window.__town.sim.residents.values()].filter((r) => r.state !== 'gone' && r.x > 27 * 16 && r.x < 89 * 16 && r.y > 17 * 16 && r.y < 57 * 16).length >= 2, null, { timeout: 60000 });
+    await frozen(page);
+    await settle(page, 4);
+    const factsBefore = await residentFacts(page);
+    assert.ok(factsBefore.length >= 4, `enough residents to compare: ${factsBefore.length}`);
+    assert.ok(factsBefore.some((f) => f.profile === 'work' && f.profileSlot === 1));
+    await page.evaluate(() => { const t = window.__town; window.__ref = { sim: t.sim, source: t.source, runtime: t.runtime, residents: [...t.sim.residents.values()] }; });
+
+    // the resident we photograph: the one standing furthest from everybody else
+    const target = await page.evaluate(() => {
+      const s = window.__town.runtime.scene(), cam = s.cameras.main, sim = window.__town.sim;
+      s.setDirector(false);
+      const rs = [...sim.residents.values()].filter((r) => r.state !== 'gone');
+      // stand inside the town so the camera can centre on the resident, not clamp at the map edge
+      const inside = rs.filter((r) => r.profile === null && r.x > 27 * 16 && r.x < 89 * 16 && r.y > 17 * 16 && r.y < 57 * 16);
+      const pool = inside.length > 0 ? inside : rs;
+      const far = (r) => Math.min(...rs.filter((o) => o !== r).map((o) => Math.hypot(o.x - r.x, o.y - r.y)), 1e9);
+      const pick = [...pool].sort((a, b) => far(b) - far(a))[0];
+      s.tweens.killTweensOf(cam); cam.panEffect.reset(); cam.stopFollow(); cam.setZoom(5); cam.centerOn(pick.x, pick.y - 8);
+      return pick.id;
+    });
+    const clip = async () => page.evaluate((id) => {
+      const s = window.__town.runtime.scene(), cam = s.cameras.main, r = window.__town.sim.residents.get(id);
+      const rect = document.querySelector('#game canvas').getBoundingClientRect(), v = cam.worldView;
+      const cx = rect.x + (r.x - v.x) * cam.zoom, cy = rect.y + (r.y - 8 - v.y) * cam.zoom;
+      const x = Math.max(rect.x, Math.round(cx - 100)), y = Math.max(rect.y, Math.round(cy - 120));
+      return { x, y, width: Math.min(200, Math.round(rect.right - x)), height: Math.min(240, Math.round(rect.bottom - y)) };
+    }, target);
+    const shots = {}, arts = {};
+    await open(page);
+    const sequence = ['theme', 'market-folk', 'plainclothes', 'theme'];
+    const tags = { theme: '', 'market-folk': 'mf', plainclothes: 'pc' };
+    const kitLabel = (kit, i) => (kit === 'theme' ? (i === 0 ? 'townsfolk' : 'townsfolk-again') : kit);
+    for (const [i, kit] of sequence.entries()) {
+      await page.selectOption('#ap-people', kit);
+      await hasKit(page, tags[kit]);
+      await settle(page, 6);
+      const label = kitLabel(kit, i);
+      arts[label] = await artState(page);
+      shots[label] = await bare(page, async () => page.screenshot({ clip: await clip() }));
+      if (i === 0) shots['townsfolk-repeat'] = await bare(page, async () => page.screenshot({ clip: await clip() }));
+      await fs.writeFile(path.join(output, `people-${label}.png`), shots[label]);
+    }
+    // identities, state and history are untouched by three kit switches
+    assert.deepEqual(await residentFacts(page), factsBefore, 'resident ids, names, roles, profiles, homes and history are unchanged');
+    assert.equal(await page.evaluate(() => { const t = window.__town, r = window.__ref; return t.sim === r.sim && t.source === r.source && t.runtime === r.runtime && r.residents.every((x) => t.sim.residents.get(x.id) === x); }), true, 'the same simulator, source, runtime and resident objects');
+    // every resident's art differs between kits, and returns exactly when the kit does
+    const ids = Object.keys(arts.townsfolk).sort();
+    assert.ok(ids.length >= 4);
+    for (const label of Object.keys(arts)) assert.deepEqual(Object.keys(arts[label]).sort(), ids, `${label}: a sprite per resident, same ids`);
+    for (const id of ids) {
+      const sheets = [arts.townsfolk[id].sheet, arts['market-folk'][id].sheet, arts.plainclothes[id].sheet];
+      assert.equal(new Set(sheets).size, 3, `${id}: three kits, three different sprite sheets`);
+      const idles = [arts.townsfolk[id].idle, arts['market-folk'][id].idle, arts.plainclothes[id].idle];
+      assert.equal(new Set(idles).size, 3, `${id}: three kits, three different idle poses`);
+      assert.equal(arts['townsfolk-again'][id].sheet, arts.townsfolk[id].sheet, `${id}: returning to the theme kit restores the original art`);
+      assert.match(arts['market-folk'][id].key, /-mf$/); assert.match(arts.plainclothes[id].key, /-pc$/);
+    }
+    // the plume, hat and gold edging are on every Market folk sprite; the linen collar is on every Plain clothes sprite; neither is on the originals
+    for (const id of ids) {
+      assert.deepEqual([arts.townsfolk[id].marks.plume, arts.townsfolk[id].marks.marketHat, arts.townsfolk[id].marks.linen], [0, 0, 0], `${id}: the original look carries no kit colours`);
+      assert.ok(arts['market-folk'][id].marks.plume >= 3 && arts['market-folk'][id].marks.marketHat >= 20 && arts['market-folk'][id].marks.gold > arts.townsfolk[id].marks.gold, `${id}: Market folk wear the plume, plum hat and gold edging ${JSON.stringify(arts['market-folk'][id].marks)}`);
+      assert.ok(arts.plainclothes[id].marks.linen >= 8 && arts.plainclothes[id].marks.plume === 0 && arts.plainclothes[id].marks.marketHat === 0, `${id}: Plain clothes wear a linen collar and hem ${JSON.stringify(arts.plainclothes[id].marks)}`);
+    }
+    // the profile colour stays authoritative and visible under every kit
+    const profileId = 'h/main/renderprobe01';
+    for (const label of ['townsfolk', 'market-folk', 'plainclothes']) assert.ok(arts[label][profileId].profileBlue >= 20, `${label}: profile blue is on the sprite (${arts[label][profileId].profileBlue}px)`);
+    assert.match(arts.plainclothes[profileId].key, /-p1-pc$/);
+    // controlled canvas pixels: a different kit is a different picture, the same kit is the same picture
+    const same = await imageDiff(shots.townsfolk, shots['townsfolk-repeat']);
+    const toMarket = await imageDiff(shots.townsfolk, shots['market-folk']);
+    const toPlain = await imageDiff(shots.townsfolk, shots.plainclothes);
+    const marketToPlain = await imageDiff(shots['market-folk'], shots.plainclothes);
+    assert.ok(same.sameSize && same.ratio < 0.02, `an unchanged kit renders the same pixels (${same.ratio})`);
+    for (const [name, d] of [['market-folk', toMarket], ['plainclothes', toPlain], ['market-folk vs plainclothes', marketToPlain]]) assert.ok(d.ratio > 0.03, `${name} visibly changes the rendered resident (${d.ratio})`);
+    // Stacked residents may swap draw order after a rebuild, so the round trip is proved by the art itself (above), not by pixels.
+    receipts.peopleRendered = { residents: ids.length, targetPixels: { sameKit: +same.ratio.toFixed(4), market: +toMarket.ratio.toFixed(4), plain: +toPlain.ratio.toFixed(4), marketVsPlain: +marketToPlain.ratio.toFixed(4) } };
+
+    // ---- the map: Town to Greenwood is a different place with the same bones
+    await page.evaluate(() => { const s = window.__town.runtime.scene(); s.setDirector(true); s.overview(); });
+    await settle(page, 6);
+    const townMap = await mapState(page), townMini = await minimapPixels(page), townShot = await canvasShot(page);
+    assert.equal(townMap.preset, 'town'); assert.deepEqual(townMap.unreachable, []);
+    await page.selectOption('#ap-map', 'greenwood');
+    await page.click('#ap-map-apply');
+    await page.waitForFunction(() => window.__town.runtime.preset.id === 'greenwood' && window.__town.runtime.scene()?.textures.exists('art-tree0'), null, { timeout: 30000 });
+    await page.waitForFunction(() => window.__town.sim.residents.size > 0, null, { timeout: 30000 });
+    await frozen(page);
+    await page.evaluate(() => { const s = window.__town.runtime.scene(); s.setDirector(true); s.overview(); });
+    await settle(page, 8);
+    const greenMap = await mapState(page), greenMini = await minimapPixels(page), greenShot = await canvasShot(page);
+    await fs.writeFile(path.join(output, 'map-town.png'), townShot); await fs.writeFile(path.join(output, 'map-greenwood.png'), greenShot);
+    assert.equal(greenMap.preset, 'greenwood');
+    assert.deepEqual(greenMap.unreachable, [], 'every station, door and porch is reachable on Greenwood');
+    assert.equal(greenMap.stations, townMap.stations); assert.deepEqual(greenMap.places, townMap.places);
+    assert.equal(greenMap.layout, townMap.layout, 'buildings, doors, stations and the entrance are exactly where they were');
+    assert.notEqual(greenMap.ground, townMap.ground); assert.notEqual(greenMap.props, townMap.props);
+    assert.ok(greenMap.trees >= townMap.trees + 60 && greenMap.hedges > townMap.hedges, `denser woods and hedgerows (${townMap.trees} -> ${greenMap.trees} trees)`);
+    const miniDiff = await imageDiff(Buffer.from(townMini, 'base64'), Buffer.from(greenMini, 'base64'), 16);
+    const shotDiff = await imageDiff(townShot, greenShot);
+    assert.ok(miniDiff.ratio > 0.1, `the minimap draws the selected map (${miniDiff.ratio} of its pixels changed)`);
+    assert.ok(shotDiff.sameSize && shotDiff.ratio > 0.3, `the canvas shows a different map (${shotDiff.ratio} of its pixels changed)`);
+    receipts.mapRendered = { townTrees: townMap.trees, greenwoodTrees: greenMap.trees, minimapPixelsChanged: +miniDiff.ratio.toFixed(3), canvasPixelsChanged: +shotDiff.ratio.toFixed(3), unreachable: greenMap.unreachable };
+
+    // a map switch keeps the chosen people kit, and Reset returns the default map and look
+    await page.selectOption('#ap-people', 'plainclothes');
+    await hasKit(page, 'pc');
+    await page.click('#ap-reset');
+    await page.waitForFunction(() => window.__town.runtime.preset.id === 'town' && window.__town.runtime.scene()?.textures.exists('art-tree0'), null, { timeout: 30000 });
+    assert.deepEqual(await resolved(page), { theme: 'classic', people: 'townsfolk', map: 'town', reduced: false, rain: false, weather: 'clear', hour: null, motes: false, windSway: 1, particleRate: 1 });
+    assert.equal((await mapState(page)).ground, townMap.ground, 'Reset rebuilds the original map');
+    assert.match(await page.textContent('#ap-status'), /rebuilt the Town map/);
+    await page.waitForFunction(() => document.querySelectorAll('#game canvas').length === 1);
+
+    // links and saved views carry both choices into a fresh page
+    const linkPage = await ctx.newPage();
+    linkPage.on('pageerror', (e) => errors.push(`rendered-link: ${e.message}`));
+    await linkPage.goto(`${base}/?agents=demo&hour=12&people=plainclothes&map=greenwood`);
+    await ready(linkPage);
+    await linkPage.waitForFunction(() => window.__town.sim.residents.size > 0, null, { timeout: 30000 });
+    assert.equal((await mapState(linkPage)).preset, 'greenwood'); assert.equal((await mapState(linkPage)).ground, greenMap.ground, 'a link builds the same Greenwood');
+    await hasKit(linkPage, 'pc');
+    await open(linkPage);
+    await linkPage.click('#ap-save');
+    await linkPage.goto(`${base}/?agents=demo&hour=12`);
+    await ready(linkPage);
+    await linkPage.waitForFunction(() => window.__town.sim.residents.size > 0, null, { timeout: 30000 });
+    assert.equal((await mapState(linkPage)).preset, 'greenwood', 'the saved view restores the map');
+    await hasKit(linkPage, 'pc');
+    await linkPage.close();
+    receipts.reset = 'Reset rebuilds the default map and look; a link and a saved view restore people and map in a fresh page';
+
+    // reduced motion and the environment still render on top of the new look
+    await page.goto(`${base}/?agents=demo&hour=12&map=greenwood&people=market-folk&weather=rain&motion=reduced`);
+    await ready(page);
+    let env = await resolved(page);
+    assert.equal(env.reduced, true); assert.equal(env.rain, false); assert.equal(env.weather, 'rain');
+    await page.goto(`${base}/?agents=demo&hour=12&map=greenwood&people=market-folk&weather=rain&motion=full`);
+    await ready(page);
+    env = await resolved(page);
+    assert.equal(env.rain, true); assert.equal(env.map, 'greenwood'); assert.equal(env.people, 'market-folk');
+    await ctx.close();
+  }
+
   // ===================================================== reduced-motion default
   {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
@@ -338,6 +577,88 @@ try {
     await ctx.close();
   }
 
+
+  // ================================================ rendered appearance, live mode
+  // The same real residents, their state and their history survive a people change and a map
+  // rebuild, and what is drawn changes. Nothing is ingested, restarted or replayed.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1672, height: 940 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => errors.push(`rendered-live: ${e.message}`));
+    const requests = [];
+    track(page, requests);
+    const C = 'h/main/cccccccccccccccc', D = 'h/main/dddddddddddddddd', E = 'h/main/eeeeeeeeeeeeeeee';
+    for (const [key, role] of [[C, 'fabrication'], [D, 'coordinator'], [E, 'research']]) {
+      assert.equal((await ingest(base, [ev(key, 'spawned', { role }), ev(key, 'assigned', { role })])).status, 202);
+    }
+    assert.equal((await ingest(base, [ev(C, 'tool_started', { role: 'fabrication', tool: 'terminal' })])).status, 202);
+    await page.goto(`${base}/?hour=12&motion=reduced`);
+    await ready(page);
+    await page.waitForFunction(() => document.querySelector('#status').textContent.includes('Hermes events received'), null, { timeout: 30000 });
+    await page.waitForFunction(() => window.__town.sim.residents.size >= 5, null, { timeout: 30000 });
+    const bridgeCount = async () => (await (await fetch(`${base}/api/town/snapshot`)).json()).bridge.receivedEvents;
+    const delivered = await bridgeCount();
+    const liveState = () => page.evaluate(() => [...window.__town.sim.residents.values()].map((r) => ({ id: r.id, state: r.state, place: r.place, anim: r.anim, station: r.station?.id ?? null, bubble: r.bubble, emote: r.emote ?? null })).sort((a, b) => (a.id < b.id ? -1 : 1)));
+    // hold the simulator still so state can be compared exactly across the kit switches (the source stays connected)
+    await page.evaluate(() => { const t = window.__town; t.sim.update = () => {}; t.sim.push = () => {}; window.__ref = { sim: t.sim, source: t.source, runtime: t.runtime }; });
+    await settle(page, 4);
+    const idsBefore = await page.evaluate(() => [...window.__town.sim.residents.keys()].sort());
+    assert.ok(['h/main/cccccccccccccccc', 'h/main/dddddddddddddddd', 'h/main/eeeeeeeeeeeeeeee'].every((id) => idsBefore.includes(id)), 'the live fixtures are in the Town');
+    const factsBefore = await residentFacts(page), stateBefore = await liveState();
+    const arts = {}, mark = requests.length;
+    await open(page);
+    for (const [label, kit, tag] of [['townsfolk', 'theme', ''], ['market-folk', 'market-folk', 'mf'], ['plainclothes', 'plainclothes', 'pc']]) {
+      await page.selectOption('#ap-people', kit);
+      await hasKit(page, tag);
+      await settle(page, 6);
+      arts[label] = await artState(page);
+    }
+    assert.deepEqual(await page.evaluate(() => [...window.__town.sim.residents.keys()].sort()), idsBefore, 'same resident ids after the people switches');
+    assert.deepEqual(await residentFacts(page), factsBefore, 'names, roles, homes and lifecycle history are untouched');
+    assert.deepEqual(await liveState(), stateBefore, 'state, place, animation and bubble are untouched');
+    assert.equal(await page.evaluate(() => window.__town.sim === window.__ref.sim && window.__town.source === window.__ref.source && window.__town.runtime === window.__ref.runtime), true);
+    assert.deepEqual(requests.slice(mark).filter((q) => q.method !== 'GET' || q.path === '/api/town/events' || q.full), [], 'people changes make no stream, snapshot or write request');
+    assert.equal(await bridgeCount(), delivered, 'people changes send nothing to the bridge');
+    for (const id of idsBefore) {
+      assert.equal(new Set([arts.townsfolk[id].sheet, arts['market-folk'][id].sheet, arts.plainclothes[id].sheet]).size, 3, `${id}: live resident art differs between the three kits`);
+    }
+    // Plain clothes stays selected for the map rebuild: the same residents come back wearing it
+    const plainSheets = Object.fromEntries(idsBefore.map((id) => [id, arts.plainclothes[id].sheet]));
+    await page.evaluate(() => { const s = window.__town.runtime.scene(); s.setDirector(true); s.overview(); });
+    await settle(page, 6);
+    const townMap = await mapState(page), townMini = await minimapPixels(page), townShot = await canvasShot(page);
+    assert.equal(townMap.preset, 'town'); assert.deepEqual(townMap.unreachable, []);
+    await page.selectOption('#ap-map', 'greenwood');
+    const reqMark = requests.length;
+    await page.click('#ap-map-apply');
+    await page.waitForFunction(() => window.__town.runtime !== window.__ref.runtime && window.__town.runtime.preset.id === 'greenwood' && window.__town.runtime.scene()?.textures.exists('art-tree0'), null, { timeout: 30000 });
+    await page.waitForFunction(() => document.querySelector('#status').textContent.includes('Hermes events received'), null, { timeout: 30000 });
+    await page.waitForFunction((n) => window.__town.sim.residents.size >= n, idsBefore.length, { timeout: 30000 });
+    await hasKit(page, 'pc');
+    await page.evaluate(() => { const s = window.__town.runtime.scene(); s.setDirector(true); s.overview(); });
+    await settle(page, 8);
+    const after = requests.slice(reqMark);
+    assert.ok(after.some((q) => q.full && q.method === 'GET'), 'the rebuilt scene re-reads the snapshot');
+    assert.ok(after.every((q) => q.method === 'GET' && q.path !== '/api/town/ingest'), 'the rebuild only reads');
+    assert.deepEqual(await page.evaluate(() => [...window.__town.sim.residents.keys()].sort()), idsBefore, 'the same real resident ids are rehydrated after the map apply');
+    const factsAfter = await residentFacts(page);
+    assert.deepEqual(factsAfter.map(({ id, kind, role, name, parentId, profile, profileSlot, home }) => ({ id, kind, role, name, parentId, profile, profileSlot, home })),
+      factsBefore.map(({ id, kind, role, name, parentId, profile, profileSlot, home }) => ({ id, kind, role, name, parentId, profile, profileSlot, home })), 'identity, role, name and home are rehydrated unchanged');
+    assert.equal(await bridgeCount(), delivered, 'the bridge delivery count is unchanged by the rebuild');
+    const artsAfter = await artState(page);
+    for (const id of idsBefore) assert.equal(artsAfter[id].sheet, plainSheets[id], `${id}: the same resident wears the same Plain clothes art on the new map`);
+    const greenMap = await mapState(page), greenMini = await minimapPixels(page), greenShot = await canvasShot(page);
+    await fs.writeFile(path.join(output, 'live-map-town.png'), townShot); await fs.writeFile(path.join(output, 'live-map-greenwood.png'), greenShot);
+    assert.equal(greenMap.preset, 'greenwood'); assert.deepEqual(greenMap.unreachable, [], 'every station, door and porch is reachable on the live Greenwood');
+    assert.equal(greenMap.layout, townMap.layout); assert.notEqual(greenMap.ground, townMap.ground);
+    const miniDiff = await imageDiff(Buffer.from(townMini, 'base64'), Buffer.from(greenMini, 'base64'), 16), shotDiff = await imageDiff(townShot, greenShot);
+    assert.ok(miniDiff.ratio > 0.1, `the live minimap draws the selected map (${miniDiff.ratio})`);
+    assert.ok(shotDiff.ratio > 0.3, `the live canvas shows the selected map (${shotDiff.ratio})`);
+    // a live Greenwood still shows the same residents' state honestly: nothing is fabricated
+    assert.equal(await page.evaluate(() => [...window.__town.sim.residents.values()].some((r) => r.kind === 'runner' && !r.parentId)), false);
+    receipts.liveRendered = { residents: idsBefore.length, delivered, minimapPixelsChanged: +miniDiff.ratio.toFixed(3), canvasPixelsChanged: +shotDiff.ratio.toFixed(3), artSheetsPerKit: 3 };
+    await ctx.close();
+  }
 
   // ===================================================== operator build default
   {
