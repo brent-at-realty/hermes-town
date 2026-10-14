@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "0.5.2",
+  "version": "0.5.3",
   "files": {
     "LICENSE": "06819b590ce85984e8dc281cf225e51cdce6e02e5145ce575d89426641173b87",
     "THIRD-PARTY-NOTICES.txt": "5f268ebfc29c575ef7a3d969d9443e567bec5d8228a01eef0a19c677b94a6a8d",
@@ -25,8 +25,8 @@
   "sources": {
     "LICENSE": "06819b590ce85984e8dc281cf225e51cdce6e02e5145ce575d89426641173b87",
     "index.html": "be2e5b195424fa3bb4541137ba1657731de3a0ef791d91a74a025799b36fb09c",
-    "package-lock.json": "f3661d7163eee36222c515430d3e479e8cbcdc2dd8ba5f6fcbf92d1c54af6f65",
-    "package.json": "aaa420e83eab945fd6b4b11b9628dfafbd61ddd8ebbaaf42d9ae0bc544ae3582",
+    "package-lock.json": "047be77a0caa05c4b942b397bec1ddf9935f60c35c8ba9278d3dcb36ce8e1af3",
+    "package.json": "70b2ac66bb745c5ae10c084570c1587e4451c7c952ae55fbf3715b5ded2393ec",
     "public/favicon.svg": "37ff6a9b15c7913753bc4516d1ceeba83d920a915b6d7fb37887e4a9889acf5f",
     "scripts/package-plugin.mjs": "0ba70e9bb27145fa118bb5b4ff285493c9e40319b9ca57f7e1a47190dc994387",
     "server/lib/contract.mjs": "bb6c85824e09d2c916f392ef0ecb1691b1412fcf3aa313b590c6f31d270cd5c1",
