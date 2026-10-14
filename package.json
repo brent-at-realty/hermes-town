@@ -23,7 +23,7 @@
     "verify:characters": "node scripts/verify-characters.mjs && node scripts/verify-motion.mjs",
     "verify:world": "node scripts/verify-world.mjs",
     "verify:appearance": "node scripts/verify-appearance.mjs && node scripts/verify-legibility.mjs",
-    "verify:worlds": "node scripts/verify-transit-worlds.mjs"
+    "verify:worlds": "node scripts/verify-transit-worlds.mjs && node scripts/verify-worlds-rendered.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0"

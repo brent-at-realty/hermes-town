@@ -83,5 +83,34 @@ export function createPixels(browser) {
     }, [withIt.toString('base64'), without.toString('base64'), held.toString('base64'), boxes, strong, tolerance]);
   };
 
-  return { measure, stats, overlay, close: async () => { if (calc) await calc.close(); } };
+  /**
+   * Of the pixels a resident itself draws (those that differ between `withIt` and `without`, a capture of the same
+   * frame without the resident), how many carry a given hue, saturation and brightness? `own` is the resident's pixel
+   * count; `hue` the pixel count in that hue band. Background that merely shares the hue is never counted.
+   */
+  const ownHue = async (withIt, without, box, [targetHue, tol, minSat, minVal = 0], { tolerance = 20 } = {}) => {
+    const p = await page();
+    return p.evaluate(async ([a, b, area, th, ht, ms, mv, tl]) => {
+      const load = (b64) => new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => { const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const g = c.getContext('2d'); g.drawImage(img, 0, 0); resolve(g.getImageData(0, 0, img.width, img.height)); };
+        img.onerror = reject; img.src = `data:image/png;base64,${b64}`;
+      });
+      const [A, B] = [await load(a), await load(b)];
+      const [x0, y0, w, h] = area;
+      let own = 0, hue = 0;
+      for (let j = Math.max(0, y0); j < Math.min(A.height, y0 + h); j++) for (let i = Math.max(0, x0); i < Math.min(A.width, x0 + w); i++) {
+        const k = (j * A.width + i) * 4;
+        if (Math.max(Math.abs(A.data[k] - B.data[k]), Math.abs(A.data[k + 1] - B.data[k + 1]), Math.abs(A.data[k + 2] - B.data[k + 2])) <= tl) continue;
+        own += 1;
+        const R = A.data[k], G = A.data[k + 1], Bl = A.data[k + 2], mx = Math.max(R, G, Bl), mn = Math.min(R, G, Bl), c = mx - mn;
+        if (c === 0 || mx < mv || c / mx < ms) continue;
+        const hh = (mx === R ? ((G - Bl) / c + 6) % 6 : mx === G ? (Bl - R) / c + 2 : (R - G) / c + 4) * 60;
+        if (Math.min(Math.abs(hh - th), 360 - Math.abs(hh - th)) <= ht) hue += 1;
+      }
+      return { own, hue };
+    }, [withIt.toString('base64'), without.toString('base64'), box, targetHue, tol, minSat, minVal, tolerance]);
+  };
+
+  return { measure, stats, overlay, ownHue, close: async () => { if (calc) await calc.close(); } };
 }

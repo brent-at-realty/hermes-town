@@ -713,11 +713,13 @@ try {
       await page.waitForFunction(() => window.__town.runtime.scene()?.textures.exists('art-tree0') && window.__town.sim.residents.size > 0, null, { timeout: 30000, polling: 100 });
       await frozen(page);
       await page.evaluate(() => { const t = window.__town; t.sim.residents.clear(); const s = t.runtime.scene(); s.setDirector(true); s.overview(); });
-      let prev = null;
+      let prev = null, same = 0;
       for (let i = 0; i < 40; i++) {
         await page.waitForTimeout(300);
         const cur = await miniData(page);
-        if (cur === prev && (notEqual === null || cur !== notEqual)) return cur;
+        // a redraw is timer driven while frames are paused, so a read can land before the first one: it must hold for two further reads
+        same = cur === prev ? same + 1 : 0;
+        if (same >= 2 && (notEqual === null || cur !== notEqual)) return cur;
         prev = cur;
       }
       assert.fail(`${label}: the minimap never settled on a redraw of the mounted map`);

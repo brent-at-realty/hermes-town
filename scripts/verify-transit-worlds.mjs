@@ -196,6 +196,13 @@ try {
   // ============================================================ packs, map switching, reset, no writes, no leaks
   {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    // count every outstanding animation-frame callback, so a loop that survives a remount shows up
+    await ctx.addInitScript(() => {
+      const raf = window.requestAnimationFrame.bind(window), caf = window.cancelAnimationFrame.bind(window), live = new Set();
+      window.__raf = live;
+      window.requestAnimationFrame = (cb) => { const id = raf((t) => { live.delete(id); cb(t); }); live.add(id); return id; };
+      window.cancelAnimationFrame = (id) => { live.delete(id); caf(id); };
+    });
     const page = await ctx.newPage();
     page.on('pageerror', (e) => errors.push(`packs: ${e.message}`));
     const requests = [];
@@ -205,8 +212,21 @@ try {
     await page.waitForFunction(() => window.__town.sim.residents.size > 0, null, { timeout: 30000 });
     const baseline = async () => page.evaluate(() => {
       const s = window.__town.runtime.scene();
-      return { canvases: document.querySelectorAll('canvas').length, games: document.querySelectorAll('#game canvas').length, textures: s.textures.getTextureKeys().length, scenes: window.__town.game.scene.scenes.length };
+      const game = window.__town.game;
+      const emitters = s.children.list.filter((o) => o.type === 'ParticleEmitter');
+      const count = (em) => em.eventNames().reduce((n, name) => n + em.listenerCount(name), 0);
+      // every game a previous mount created: none may still be running
+      const retired = window.__retired ?? [];
+      return {
+        canvases: document.querySelectorAll('canvas').length, games: document.querySelectorAll('#game canvas').length,
+        textures: s.textures.getTextureKeys().length, scenes: game.scene.scenes.length,
+        emitters: emitters.length, particlesAlive: emitters.reduce((n, e) => n + e.getAliveParticleCount(), 0),
+        listeners: count(s.events) + count(game.events) + count(s.input),
+        rafLoops: window.__raf.size,
+        retiredStillRunning: retired.filter((g) => g.loop && g.loop.running).length, retired: retired.length,
+      };
     });
+    const retire = () => page.evaluate(() => { (window.__retired ??= []).push(window.__town.game); });
     const first = await baseline();
     assert.equal(first.games, 1);
     await open(page);
@@ -217,6 +237,7 @@ try {
       assert.deepEqual(choice, { theme: w.id, people: w.people, map: w.id });
       assert.notEqual(await page.evaluate(() => window.__town.runtime.preset.id), w.id, 'the old map stays until Apply');
       assert.match(await page.textContent('#ap-route-note'), /not a separate Hermes lifecycle signal/);
+      await retire();
       await page.click('#ap-map-apply');
       await page.waitForFunction((id) => window.__town.runtime.preset.id === id && window.__town.runtime.scene()?.textures.exists('art-tree0'), w.id, { timeout: 30000 });
       assert.equal(await page.locator('#game canvas').count(), 1);
@@ -229,6 +250,7 @@ try {
     for (const id of cycles) {
       await page.selectOption('#ap-map', id);
       if (id === 'cyber-city' || id === 'orbital-system') { await startRide(page).catch(() => null); }
+      await retire();
       await page.click('#ap-map-apply');
       await page.waitForFunction((m) => window.__town.runtime.preset.id === m && window.__town.runtime.scene()?.textures.exists('art-tree0'), id, { timeout: 30000 });
       await page.waitForFunction(() => window.__town.sim.residents.size > 0, null, { timeout: 30000 });
@@ -240,6 +262,14 @@ try {
     assert.equal(new Set(townCounts.map((c) => c.textures)).size, 1, `Town texture count is stable across switches: ${townCounts.map((c) => c.textures)}`);
     assert.equal(new Set(counts.filter((c) => c.id === 'cyber-city').map((c) => c.textures)).size, 1);
     assert.equal(new Set(counts.filter((c) => c.id === 'orbital-system').map((c) => c.textures)).size, 1);
+    // nothing accumulates across repeated switching and mid-ride remounts: emitters and listeners return to the same
+    // count for the same map, one animation loop family at a time, and every retired game has stopped
+    for (const id of ['town', 'cyber-city', 'orbital-system']) {
+      const same = counts.filter((c) => c.id === id);
+      for (const key of ['emitters', 'listeners', 'rafLoops']) assert.equal(new Set(same.map((c) => c[key])).size, 1, `${id}: ${key} is stable across ${same.length} remounts (${same.map((c) => c[key])})`);
+    }
+    assert.ok(counts.every((c) => c.retiredStillRunning === 0), `every retired game has stopped (${counts.map((c) => `${c.id}:${c.retiredStillRunning}/${c.retired}`)})`);
+    assert.ok(Math.max(...counts.map((c) => c.rafLoops)) <= first.rafLoops + 2, `outstanding animation-frame callbacks stay at the first mount's level (${first.rafLoops} -> ${counts.map((c) => c.rafLoops)})`);
     const pool = await page.evaluate(() => window.__town.runtime.scene().transit?.stats() ?? null);
     assert.equal(pool, null, 'the Town mounts no transit layer');
     assert.deepEqual(requests.filter((q) => q.method !== 'GET'), [], 'appearance and map changes make no write request');
@@ -247,7 +277,7 @@ try {
     await page.click('#ap-reset');
     await page.waitForFunction(() => window.__town.appearance.resolved().map.id === 'town');
     assert.deepEqual(await page.evaluate(() => { const a = window.__town.appearance.resolved(); return { theme: a.theme.id, people: a.people.id, map: a.map.id }; }), { theme: 'classic', people: 'townsfolk', map: 'town' });
-    receipts.switching = { cycles: counts };
+    receipts.switching = { first, cycles: counts };
     await ctx.close();
   }
 
@@ -267,20 +297,20 @@ try {
       // the documented depth floors of lifecycle text; the live name tag must really sit at its floor
       const floor = Math.min(NAME, BUBBLE, EMOTE);
       if (view.name.depth !== 0 && view.name.depth < NAME) return { floor: view.name.depth, highest: Infinity, rides: 0, ambient: 0, rain: 0 };
-      const rides = s.transit.snapshot().map((r) => r.depth);
-      const ambient = s.ambient ? s.ambient.objects.map((o) => o.depth) : [];
-      const rain = s.rainLayers.map((l) => l.sprite.depth);
-      const decorative = [...rides, ...ambient, ...rain];
-      return { NAME, BUBBLE, EMOTE, floor, highest: Math.max(...decorative), rides: rides.length, ambient: ambient.length, rain: rain.length };
+      // every decorative layer the scene owns: grade, wash, haze, fog, rain, motes, ambient, cloud shadow, night, sparks, transit
+      const layers = s.decorativeLayers();
+      const names = [...new Set(layers.map((l) => l.layer))].sort();
+      return { NAME, BUBBLE, EMOTE, floor, highest: Math.max(...layers.map((l) => l.depth)), rides: s.transit.snapshot().length, ambient: layers.filter((l) => l.layer === 'ambient').length, rain: layers.filter((l) => l.layer === 'rain').length, names };
     });
     const ok = await audit();
     assert.ok(ok.rides >= 1 && ok.ambient > 0 && ok.rain > 0, `${w.id}: the audit sees a ride, ambient layers and the weather (${JSON.stringify(ok)})`);
+    for (const must of ['grade', 'grade-add', 'haze', 'night', 'clouds', 'sparks', 'ambient', 'rain', 'transit']) assert.ok(ok.names.includes(must), `${w.id}: the audit lists the ${must} layer (${ok.names.join(', ')})`);
     assert.ok(ok.highest < ok.floor, `${w.id}: highest decorative depth ${ok.highest} is beneath the lowest lifecycle depth ${ok.floor}`);
-    // control: lift one ambient object above the name tags and prove the same audit fails
-    await page.evaluate(() => { const s = window.__town.runtime.scene(); (s.ambient.objects[0]).setDepth(170000); });
+    // control: lift the colour grade above the name tags and prove the same audit fails
+    await page.evaluate(() => { const s = window.__town.runtime.scene(); s.decorativeLayers().find((l) => l.layer === 'grade').object.setDepth(170000); });
     const bad = await audit();
     assert.ok(!(bad.highest < bad.floor), `${w.id}: the audit must fail when a decorative layer is lifted above the name tags`);
-    receipts[`depth-${w.id}`] = { highestDecorative: ok.highest, lowestLifecycle: ok.floor, controlFails: true };
+    receipts[`depth-${w.id}`] = { highestDecorative: ok.highest, lowestLifecycle: ok.floor, layers: ok.names, controlFails: true };
     await ctx.close();
   }
 

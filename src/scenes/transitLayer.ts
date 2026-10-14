@@ -4,6 +4,7 @@ import { profileColorFor } from '../art/profileColors';
 import type { Resident, TownSim } from '../sim/town';
 import type { TownMap } from '../world/map';
 import { riderVisible, transitPhase, type TransitConnector } from '../world/transit';
+import { TRANSIT_DEPTH } from './depthBands';
 
 /**
  * Draws the lifts and shuttles that residents ride.
@@ -15,9 +16,9 @@ import { riderVisible, transitPhase, type TransitConnector } from '../world/tran
  * ride ends, and everything is destroyed with the scene.
  *
  * Depth: lift cars follow the rider's own depth, shuttles sit at {@link TRANSIT_DEPTH}. Both are far below every name
- * tag (150000), bubble (160000) and emote (160002), and below the weather layers.
+ * tag, bubble and emote (see depthBands.ts), and beneath the grade, fog and rain layers.
  */
-export const TRANSIT_DEPTH = 96000;
+export { TRANSIT_DEPTH };
 const MAX_RIDES = 16;
 const PUFFS = 10;
 
@@ -225,6 +226,11 @@ export class TransitLayer {
     });
   }
 
+  /** Every display object this layer owns (active and pooled), for the depth audit. */
+  objects(): Phaser.GameObjects.GameObject[] {
+    return [...this.active.values(), ...this.pool].flatMap((v) => [v.body, v.open, v.passenger, v.label, ...v.puffs]);
+  }
+
   /** What is on screen now, for verification. */
   snapshot(): RideSnapshot[] {
     const out: RideSnapshot[] = [];
@@ -248,4 +254,3 @@ export class TransitLayer {
     this.active.clear(); this.pool.length = 0;
   }
 }
-
