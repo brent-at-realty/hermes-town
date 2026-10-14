@@ -251,6 +251,64 @@ try {
     await ctx.close();
   }
 
+  // ============================================================ depth: nothing decorative may sit above lifecycle text
+  for (const w of worlds) {
+    const ctx = await browser.newContext({ viewport: { width: 1672, height: 940 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => errors.push(`depth ${w.id}: ${e.message}`));
+    await page.goto(`${base}/?agents=demo&hour=12&theme=${w.id}&weather=rain`);
+    await ready(page);
+    await page.waitForFunction(() => window.__town.sim.residents.size > 0, null, { timeout: 30000 });
+    await startRide(page, { tool: w.tool });
+    const audit = () => page.evaluate(() => {
+      const s = window.__town.runtime.scene();
+      const NAME = 150000, BUBBLE = 160000, EMOTE = 160002;
+      const [view] = [...s.views.values()];
+      // the documented depth floors of lifecycle text; the live name tag must really sit at its floor
+      const floor = Math.min(NAME, BUBBLE, EMOTE);
+      if (view.name.depth !== 0 && view.name.depth < NAME) return { floor: view.name.depth, highest: Infinity, rides: 0, ambient: 0, rain: 0 };
+      const rides = s.transit.snapshot().map((r) => r.depth);
+      const ambient = s.ambient ? s.ambient.objects.map((o) => o.depth) : [];
+      const rain = s.rainLayers.map((l) => l.sprite.depth);
+      const decorative = [...rides, ...ambient, ...rain];
+      return { NAME, BUBBLE, EMOTE, floor, highest: Math.max(...decorative), rides: rides.length, ambient: ambient.length, rain: rain.length };
+    });
+    const ok = await audit();
+    assert.ok(ok.rides >= 1 && ok.ambient > 0 && ok.rain > 0, `${w.id}: the audit sees a ride, ambient layers and the weather (${JSON.stringify(ok)})`);
+    assert.ok(ok.highest < ok.floor, `${w.id}: highest decorative depth ${ok.highest} is beneath the lowest lifecycle depth ${ok.floor}`);
+    // control: lift one ambient object above the name tags and prove the same audit fails
+    await page.evaluate(() => { const s = window.__town.runtime.scene(); (s.ambient.objects[0]).setDepth(170000); });
+    const bad = await audit();
+    assert.ok(!(bad.highest < bad.floor), `${w.id}: the audit must fail when a decorative layer is lifted above the name tags`);
+    receipts[`depth-${w.id}`] = { highestDecorative: ok.highest, lowestLifecycle: ok.floor, controlFails: true };
+    await ctx.close();
+  }
+
+  // ============================================================ every people kit paints a different resident, and the profile colour survives
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => errors.push(`kits: ${e.message}`));
+    const kits = ['townsfolk', 'market-folk', 'plainclothes', 'neon-operatives', 'orbital-crew'];
+    const sheets = {};
+    for (const kit of kits) {
+      await page.goto(`${base}/?agents=demo&hour=12&people=${kit}`);
+      await ready(page);
+      await page.waitForFunction(() => window.__town.sim.residents.size > 0, null, { timeout: 30000 });
+      sheets[kit] = await page.evaluate(() => {
+        const s = window.__town.runtime.scene();
+        const hash = (c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let h = 2166136261; for (let i = 0; i < d.length; i++) h = Math.imul(h ^ d[i], 16777619); return h >>> 0; };
+        return { kit: s.appearance().people.id, hashes: [...s.views.values()].map((v) => hash(s.textures.get(v.key).getSourceImage())).sort() };
+      });
+      assert.equal(sheets[kit].kit, kit);
+    }
+    for (let i = 0; i < kits.length; i++) for (let j = i + 1; j < kits.length; j++) {
+      assert.notDeepEqual(sheets[kits[i]].hashes, sheets[kits[j]].hashes, `${kits[i]} and ${kits[j]} paint different residents`);
+    }
+    receipts.kitPairs = `${kits.length * (kits.length - 1) / 2} pairs differ`;
+    await ctx.close();
+  }
+
   // ============================================================ profile colour is still the loudest colour on a rider
   {
     const ctx = await browser.newContext({ viewport: { width: 1672, height: 940 } });
