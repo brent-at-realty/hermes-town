@@ -35,6 +35,16 @@ export const WEATHER_OPTIONS: readonly WeatherProfile[] = [
   { id: 'rain', label: 'Rain', haze: 0.14, dim: 0.14, rain: true, fog: 0.16, rainSheet: 0.62, wash: { color: 0x8fa6c4, alpha: 0.32, blend: 'multiply' } },
 ];
 
+/**
+ * Wording for the weather choices in a world that has no weather in the usual sense. The stored and shared values
+ * stay clear, mist and rain, so links and saved views keep working; only the label and the picture change.
+ */
+const ORBIT_WEATHER_LABELS: Record<WeatherId, string> = { clear: 'Clear orbit', mist: 'Nebula haze', rain: 'Solar-particle field' };
+
+export function weatherOptionsFor(atmosphere?: 'orbit'): { id: WeatherId; label: string }[] {
+  return WEATHER_OPTIONS.map((o) => ({ id: o.id, label: atmosphere === 'orbit' ? ORBIT_WEATHER_LABELS[o.id] : o.label }));
+}
+
 export const MOTION_OPTIONS: readonly { id: MotionChoice; label: string }[] = [
   { id: 'system', label: 'Follow my system setting' },
   { id: 'reduced', label: 'Reduce motion' },

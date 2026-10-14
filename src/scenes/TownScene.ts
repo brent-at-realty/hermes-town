@@ -1,7 +1,10 @@
 import Phaser from 'phaser';
 import { ReferenceArt, REFERENCE_ATLASES } from '../art/reference';
 import { paintTerrain } from '../art/terrain';
-import { paintFogBank, paintRainSheet, paintRipple } from '../art/weather';
+import { paintFogBank, paintRainSheet, paintRipple, paintSolarSheet } from '../art/weather';
+import { paintWorld } from '../art/worlds';
+import { TransitLayer } from './transitLayer';
+import { buildWorldAmbient, type Ambient } from './worldAmbient';
 import { paintStructures } from '../art/structures';
 import { PROP_ANCHORS, TREE_ANCHORS } from '../world/dressing';
 import {
@@ -11,6 +14,7 @@ import { residentPose } from './residentAnimation';
 import { hashString } from '../art/painter';
 import { profileColorFor } from '../art/profileColors';
 import { PROP_ART, propArtKey } from '../art/propArt';
+import { paintWorldProp } from '../art/worldProps';
 import { T, TILE, paintGlow, paintShadow, paintSpark } from '../art/tiles';
 import type { Resident, TownSim } from '../sim/town';
 import type { Place } from '../sim/toolMap';
@@ -18,16 +22,24 @@ import type { Building, TownMap } from '../world/map';
 import { applyPeopleKit } from '../themes/people';
 import type { ResolvedAppearance } from '../themes/resolve';
 import type { MapView } from '../themes/types';
+import { EFFECT_DEPTHS, LIFECYCLE_DEPTHS, SIGN_DEPTH, STALL_SIGN_DEPTH } from './depthBands';
 
 const ZOOMS = [1, 1.5, 2, 3, 4, 5];
 
 /**
- * Weather draws over the world but under every lifecycle indicator: building
- * signs (100000/100001), resident name tags (150000), bubbles (160000/160001)
- * and emotes (160002). verify-legibility holds this ordering as a contract.
+ * Weather and every other decorative post-process draw over the world but under
+ * every lifecycle indicator: building signs, resident name tags, bubbles and
+ * emotes (see depthBands.ts). verify-legibility and verify-transit-worlds hold
+ * this ordering as a contract.
  */
-export const FOG_DEPTH = 99000;
-export const RAIN_DEPTH = 99500;
+export const FOG_DEPTH = EFFECT_DEPTHS.fog;
+export const RAIN_DEPTH = EFFECT_DEPTHS.rain;
+
+/** Name a decorative layer on the object itself, so the scene (and its verification) can list every one of them. */
+function tagLayer<O>(o: O, layer: string): O {
+  (o as unknown as Phaser.GameObjects.GameObject).setData?.('layer', layer);
+  return o;
+}
 
 /** Channel-wise product of two 0xRRGGBB tints. */
 function multiplyTint(a: number, b: number): number {
@@ -105,7 +117,7 @@ export class TownScene extends Phaser.Scene {
   private decor: { destroy(): void }[] = [];
   /** Weather layers rebuilt with the decor: scrolling fog banks, rain sheets and the camera-following ripple zone. */
   private fogLayers: { sprite: Phaser.GameObjects.TileSprite; vx: number; vy: number }[] = [];
-  private rainLayers: { sprite: Phaser.GameObjects.TileSprite; vx: number; vy: number }[] = [];
+  private rainLayers: { sprite: Phaser.GameObjects.TileSprite; vx: number; vy: number; sheet: string }[] = [];
   private rippleZone: Phaser.Geom.Rectangle | null = null;
   private fountains: { x: number; y: number; foot: number }[] = [];
   private terrainImages: Phaser.GameObjects.Image[] = [];
@@ -115,6 +127,9 @@ export class TownScene extends Phaser.Scene {
   private sceneLabels: Phaser.GameObjects.Text[] = [];
   private hazeSerial = 0;
   private created = false;
+  /** Lifts and shuttles: present only on a map with a transit network. */
+  transit: TransitLayer | null = null;
+  private ambient: Ambient | null = null;
   /** One reusable image for stamping glows into render textures. */
   private stamp!: Phaser.GameObjects.Image;
   private frameParity = 0;
@@ -140,7 +155,8 @@ export class TownScene extends Phaser.Scene {
     const tex = this.textures;
     const add = (key: string, c: HTMLCanvasElement) => tex.addCanvas(key, c);
     const art = new ReferenceArt(Object.fromEntries(Object.keys(REFERENCE_ATLASES).map(key => [key, tex.get(`reference-${key}`).getSourceImage()])) as Record<keyof typeof REFERENCE_ATLASES, HTMLImageElement>);
-    add('terrain', paintTerrain(map, this.opts.appearance.map.terrain));
+    const world = map.skin ? paintWorld(map) : null;
+    if (!world) add('terrain', paintTerrain(map, this.opts.appearance.map.terrain));
     add('glow', paintGlow()); add('spark', paintSpark());
     add('shadow-tree', paintShadow(26, 10)); add('shadow-char', paintShadow(12, 5));
     for (const e of ['ok', 'fail', 'think', 'zzz', 'wait'] as const) add(`emote-${e}`, paintEmote(e));
@@ -150,11 +166,14 @@ export class TownScene extends Phaser.Scene {
       tex.get(key).setFilter(Phaser.Textures.FilterMode.LINEAR);
     }
     add('rain-near', paintRainSheet(5, 70, 26)); add('rain-far', paintRainSheet(9, 90, 15)); add('ripple', paintRipple());
+    // The Orbital System has no rain: its "rain" setting is a field of solar particles, drawn the same decorative way.
+    if (map.vacuum === true) { add('solar-near', paintSolarSheet(5, 46, 24)); add('solar-far', paintSolarSheet(9, 64, 14)); }
 
     // Detailed sprites retain their authored feet; navigation is still in world pixels.
     // The table is data (`PROP_ART`), shared with the map validation.
     for (const s of PROP_ART) {
-      const canvas = s.source === 'tree' ? art.tree(s.index)
+      const canvas = s.source === 'custom' ? paintWorldProp(s.key)
+        : s.source === 'tree' ? art.tree(s.index)
         : s.source === 'bush' ? art.bush()
         : s.source === 'prop' ? art.prop(s.index, s.w, s.h)
         : s.source === 'furniture' ? art.furniture(s.index, s.w, s.h)
@@ -162,20 +181,26 @@ export class TownScene extends Phaser.Scene {
       add(`art-${s.key}`, canvas);
     }
 
-    this.terrainImages.push(this.add.image(0, 0, 'terrain').setOrigin(0, 0).setScale(0.5).setDepth(-11));
-    add('structures', paintStructures(map, art));
-    this.terrainImages.push(this.add.image(0, 0, 'structures').setOrigin(0, 0).setScale(0.5).setDepth(-2));
+    if (world) {
+      add('world-sky', world.sky); add('world-ground', world.ground);
+      this.add.image(0, 0, 'world-sky').setOrigin(0, 0).setScale(0.5).setDepth(-13);
+      this.terrainImages.push(this.add.image(0, 0, 'world-ground').setOrigin(0, 0).setScale(0.5).setDepth(-11));
+    } else {
+      this.terrainImages.push(this.add.image(0, 0, 'terrain').setOrigin(0, 0).setScale(0.5).setDepth(-11));
+      add('structures', paintStructures(map, art));
+      this.terrainImages.push(this.add.image(0, 0, 'structures').setOrigin(0, 0).setScale(0.5).setDepth(-2));
+    }
 
     // buildings
     for (const b of [...map.buildings, ...map.homes]) {
-      const lit = art.building(b.kind, b.w * TILE + 6, true);
-      const dark = art.building(b.kind, b.w * TILE + 6, false);
+      const lit = world ? world.room(b, true) : art.building(b.kind, b.w * TILE + 6, true);
+      const dark = world ? world.room(b, false) : art.building(b.kind, b.w * TILE + 6, false);
       const litKey = `b-${b.id}-lit`, darkKey = `b-${b.id}-dark`;
       add(litKey, lit); add(darkKey, dark);
       const baseY = (b.y + b.h) * TILE;
       // a soft pool of shadow under the wall, never a box
-      this.shadow(this.add.image((b.x + b.w / 2) * TILE, baseY + 2, 'shadow-tree').setScale((b.w * TILE) / 22, 1.1).setDepth(-5), 0.35);
-      if (b.kind === 'forge') this.dayLights.push({ x: (b.x + b.w / 2) * TILE, y: baseY + 6, scale: 1.1, tint: 0xf28b3c, alpha: 0.35 });
+      if (!world) this.shadow(this.add.image((b.x + b.w / 2) * TILE, baseY + 2, 'shadow-tree').setScale((b.w * TILE) / 22, 1.1).setDepth(-5), 0.35);
+      if (world) { /* the painted world carries its own lighting */ } else if (b.kind === 'forge') this.dayLights.push({ x: (b.x + b.w / 2) * TILE, y: baseY + 6, scale: 1.1, tint: 0xf28b3c, alpha: 0.35 });
       else if (b.kind === 'tavern') this.dayLights.push({ x: (b.x + b.w / 2) * TILE, y: baseY + 4, scale: 0.9, tint: 0xf2c063, alpha: 0.22 });
       else if (b.kind === 'house') this.dayLights.push({ x: (b.x + b.w / 2) * TILE, y: baseY - 6, scale: 0.5, tint: 0xf6c15a, alpha: 0.12 });
       else this.dayLights.push({ x: (b.x + b.w / 2) * TILE, y: baseY - 4, scale: 0.8, tint: 0xf6c15a, alpha: 0.14 });
@@ -184,7 +209,7 @@ export class TownScene extends Phaser.Scene {
       let smoke: Phaser.GameObjects.Particles.ParticleEmitter | null = null;
       // Workplace smoke follows the simulator's activity for that building (see update);
       // it is lifecycle-derived, so neither a theme nor reduced motion alters it.
-      if (b.kind === 'forge' || b.kind === 'workshop' || b.kind === 'tavern') {
+      if (!world && (b.kind === 'forge' || b.kind === 'workshop' || b.kind === 'tavern')) {
         const cx = (b.x + b.w) * TILE - (b.kind === 'forge' ? 8 : 11);
         const cy = baseY - lit.height / 2 + (b.kind === 'forge' ? 0 : 4);
         smoke = this.add.particles(cx, cy, 'spark', {
@@ -195,10 +220,14 @@ export class TownScene extends Phaser.Scene {
       }
       this.buildingViews.push({ building: b, image, litKey, darkKey, lit: false, smoke, glowX: (b.x + b.w / 2) * TILE, glowY: baseY - 10 });
       if (b.kind !== 'house') {
-        this.sceneLabels.push(this.add.text((b.x + b.w / 2) * TILE, baseY + 3, b.label, { fontFamily: 'monospace', fontSize: '6px', color: this.app.ui.scene.label, backgroundColor: this.app.ui.scene.labelBackground, padding: { x: 2, y: 1 } })
-          .setOrigin(0.5, 0).setResolution(6).setDepth(100000).setAlpha(0.9));
+        // In a painted world the label hangs over the room, so it never sits on the walkable deck.
+        const labelY = world ? b.y * TILE - 1 : baseY + 3;
+        this.sceneLabels.push(this.add.text((b.x + b.w / 2) * TILE, labelY, b.label, { fontFamily: 'monospace', fontSize: '6px', color: this.app.ui.scene.label, backgroundColor: this.app.ui.scene.labelBackground, padding: { x: 2, y: 1 } })
+          .setOrigin(0.5, world ? 1 : 0).setResolution(6).setDepth(SIGN_DEPTH).setAlpha(0.9));
       }
     }
+    // Lamps of a painted world light the night the way the town's lamps do.
+    if (world) for (const l of map.lamps) { this.lampPositions.push({ x: l.x * TILE + 8, y: l.y * TILE + 4 }); this.dayLights.push({ x: l.x * TILE + 8, y: l.y * TILE + 10, scale: 0.9, tint: 0x9fe8ff, alpha: 0.18 }); }
 
     // Every visible environment prop comes from the same atlas family.
     // The map catalog removes unsupported props before collision construction.
@@ -253,16 +282,21 @@ export class TownScene extends Phaser.Scene {
     this.sparks = this.add.particles(0, 0, 'spark', {
       speed: { min: 20, max: 50 }, angle: { min: 200, max: 340 }, gravityY: 120, lifespan: { min: 250, max: 500 },
       scale: { start: 0.8, end: 0.2 }, tint: [0xffd36b, 0xf28b3c, 0xffffff], emitting: false, quantity: 3,
-    }).setDepth(99999);
+    }).setDepth(EFFECT_DEPTHS.sparks);
+    tagLayer(this.sparks, 'sparks');
 
     this.stamp = this.make.image({ key: 'glow', add: false });
-    this.night = this.add.renderTexture(0, 0, MW * TILE, MH * TILE).setOrigin(0, 0).setDepth(200000);
+    this.night = tagLayer(this.add.renderTexture(0, 0, MW * TILE, MH * TILE).setOrigin(0, 0).setDepth(EFFECT_DEPTHS.night), 'night');
     this.night.setBlendMode(Phaser.BlendModes.MULTIPLY);
     // cloud shadows: broad soft patches drifting with the wind
-    this.clouds = this.add.renderTexture(0, 0, MW * TILE, MH * TILE).setOrigin(0, 0).setDepth(199000);
+    this.clouds = tagLayer(this.add.renderTexture(0, 0, MW * TILE, MH * TILE).setOrigin(0, 0).setDepth(EFFECT_DEPTHS.clouds), 'clouds');
     this.clouds.setBlendMode(Phaser.BlendModes.MULTIPLY);
     this.buildDecor();
     this.paintTheme();
+    if (map.transit) {
+      this.transit = new TransitLayer(this, map, this.opts.sim);
+      this.events.once('shutdown', () => { this.transit?.destroy(); this.transit = null; });
+    }
 
     // camera
     const cam = this.cameras.main;
@@ -366,18 +400,20 @@ export class TownScene extends Phaser.Scene {
     for (const d of this.decor) d.destroy();
     this.decor = [];
     const env = this.app.environment;
-    const keep = <O extends { destroy(): void }>(o: O): O => { this.decor.push(o); return o; };
+    const keep = <O extends { destroy(): void }>(o: O, layer?: string): O => { this.decor.push(o); if (layer) tagLayer(o, layer); return o; };
     const rate = Math.max(0.05, env.particleRate);
 
     for (const l of this.dayLights) {
-      keep(this.add.image(l.x, l.y, 'glow').setScale(l.scale, l.scale * 0.55).setTint(l.tint).setAlpha(Math.min(1, l.alpha * env.lampGlow)).setBlendMode(Phaser.BlendModes.ADD).setDepth(-2));
+      keep(this.add.image(l.x, l.y, 'glow').setScale(l.scale, l.scale * 0.55).setTint(l.tint).setAlpha(Math.min(1, l.alpha * env.lampGlow)).setBlendMode(Phaser.BlendModes.ADD).setDepth(-2), 'glow');
     }
     // the colour grade over the whole world
     const g = env.grade;
-    keep(this.add.rectangle(0, 0, this.mapW * TILE, this.mapH * TILE, g.multiplyColor, 1).setOrigin(0, 0).setBlendMode(Phaser.BlendModes.MULTIPLY).setDepth(197500).setAlpha(g.multiplyAlpha));
-    keep(this.add.rectangle(0, 0, this.mapW * TILE, this.mapH * TILE, g.addColor, 1).setOrigin(0, 0).setBlendMode(Phaser.BlendModes.ADD).setDepth(197501).setAlpha(g.addAlpha));
+    keep(this.add.rectangle(0, 0, this.mapW * TILE, this.mapH * TILE, g.multiplyColor, 1).setOrigin(0, 0).setBlendMode(Phaser.BlendModes.MULTIPLY).setDepth(EFFECT_DEPTHS.grade).setAlpha(g.multiplyAlpha), 'grade');
+    keep(this.add.rectangle(0, 0, this.mapW * TILE, this.mapH * TILE, g.addColor, 1).setOrigin(0, 0).setBlendMode(Phaser.BlendModes.ADD).setDepth(EFFECT_DEPTHS.gradeAdd).setAlpha(g.addAlpha), 'grade-add');
 
     this.buildWeather(keep);
+    this.ambient = buildWorldAmbient(this, this.opts.map, env.reducedMotion);
+    if (this.ambient) for (const o of this.ambient.objects) keep(o, 'ambient');
 
     // edge haze: the far countryside softens toward the world's edge
     const hazeKey = `haze-${this.hazeSerial++}`;
@@ -391,7 +427,7 @@ export class TownScene extends Phaser.Scene {
     grad.addColorStop(1, `rgba(${hr},${hg},${hb},0.55)`);
     hctx.fillStyle = grad; hctx.fillRect(0, 0, 256, 256);
     this.textures.addCanvas(hazeKey, hz);
-    keep(this.add.image(0, 0, hazeKey).setOrigin(0, 0).setDisplaySize(this.mapW * TILE, this.mapH * TILE).setDepth(198000).setAlpha(env.hazeAlpha));
+    keep(this.add.image(0, 0, hazeKey).setOrigin(0, 0).setDisplaySize(this.mapW * TILE, this.mapH * TILE).setDepth(EFFECT_DEPTHS.haze).setAlpha(env.hazeAlpha), 'haze');
     this.decor.push({ destroy: () => { this.textures.remove(hazeKey); } });
 
     if (env.fountain) {
@@ -400,7 +436,7 @@ export class TownScene extends Phaser.Scene {
           speedX: { min: -9, max: 9 }, speedY: { min: -10, max: -4 }, gravityY: 20,
           lifespan: 600, frequency: 160 / rate, scale: { start: 0.35, end: 0.1 },
           alpha: { start: 0.7, end: 0 }, tint: [0xa9d0d1, 0xe5e9d7],
-        }).setDepth(f.foot + 1));
+        }).setDepth(f.foot + 1), 'fountain');
       }
     }
     if (env.idleSmoke) {
@@ -408,7 +444,7 @@ export class TownScene extends Phaser.Scene {
         keep(this.add.particles(c.x, c.y, 'spark', {
           speedY: { min: -6, max: -10 }, speedX: { min: -2, max: 3 }, lifespan: 3200,
           scale: { start: 0.8, end: 2.4 }, alpha: { start: 0.3, end: 0 }, tint: 0xa9a9ae, frequency: 700 / rate, quantity: 1,
-        }).setDepth(c.y + 200));
+        }).setDepth(c.y + 200), 'smoke');
       }
     }
 
@@ -420,7 +456,7 @@ export class TownScene extends Phaser.Scene {
         emitZone, speedX: { min: -4, max: 4 }, speedY: { min: -7, max: -2 }, lifespan: 7000,
         frequency: 7000 / env.motes.count, scale: { start: 0.5, end: 0.2 },
         alpha: { start: env.motes.alpha, end: 0 }, tint: env.motes.color, blendMode: Phaser.BlendModes.ADD,
-      }).setDepth(198500));
+      }).setDepth(EFFECT_DEPTHS.motes), 'motes');
     }
 
     // cloud shadows follow the profile's count; blobs are decorative texture, not weather the town reports
@@ -436,13 +472,13 @@ export class TownScene extends Phaser.Scene {
    * by weather; rain still draws over the residents and buildings themselves,
    * which is what makes it read as weather. Fog has gaps by construction.
    */
-  private buildWeather(keep: <O extends { destroy(): void }>(o: O) => O): void {
+  private buildWeather(keep: <O extends { destroy(): void }>(o: O, layer?: string) => O): void {
     const env = this.app.environment;
     this.fogLayers = []; this.rainLayers = []; this.rippleZone = null;
     const W = this.mapW * TILE, H = this.mapH * TILE;
     if (env.wash) {
       keep(this.add.rectangle(0, 0, W, H, env.wash.color, 1).setOrigin(0, 0)
-        .setBlendMode(env.wash.blend === 'add' ? Phaser.BlendModes.ADD : Phaser.BlendModes.MULTIPLY).setDepth(197600).setAlpha(env.wash.alpha));
+        .setBlendMode(env.wash.blend === 'add' ? Phaser.BlendModes.ADD : Phaser.BlendModes.MULTIPLY).setDepth(EFFECT_DEPTHS.wash).setAlpha(env.wash.alpha), 'wash');
     }
     if (env.fogAlpha > 0) {
       const [hr, hg, hb] = env.hazeColor;
@@ -451,26 +487,44 @@ export class TownScene extends Phaser.Scene {
       // three banks at different scales and speeds, drifting in different directions, so they slide through one another
       for (const [key, scale, share, vx, vy] of [['fog-a', 2.6, 0.95, 9, 2], ['fog-b', 1.9, 0.8, -14, 3], ['fog-c', 3.4, 0.65, 5, -1.5]] as const) {
         const sprite = keep(this.add.tileSprite(0, 0, W, H, key).setOrigin(0, 0).setTileScale(scale, scale).setTint(fogTint)
-          .setAlpha(Math.min(1, env.fogAlpha * share)).setDepth(FOG_DEPTH));
+          .setAlpha(Math.min(1, env.fogAlpha * share)).setDepth(FOG_DEPTH), 'fog');
         this.fogLayers.push({ sprite, vx: vx * env.fogDrift, vy: vy * env.fogDrift });
       }
     }
     if (env.rainSheetAlpha > 0) {
-      for (const [key, share, speed] of [['rain-far', 0.7, 430], ['rain-near', 1, 650]] as const) {
+      // Rain on a planet; a drifting solar-particle field in orbit, where there is no weather to fall.
+      const orbit = this.opts.map.vacuum === true;
+      const sheets = orbit ? [['solar-far', 0.7, 60], ['solar-near', 1, 120]] as const : [['rain-far', 0.7, 430], ['rain-near', 1, 650]] as const;
+      for (const [key, share, speed] of sheets) {
         const sprite = keep(this.add.tileSprite(0, 0, W, H, key).setOrigin(0, 0)
-          .setAlpha(Math.min(1, env.rainSheetAlpha * share)).setDepth(RAIN_DEPTH));
-        this.rainLayers.push({ sprite, vx: env.rainFalls ? speed * 0.22 : 0, vy: env.rainFalls ? -speed : 0 });
+          .setAlpha(Math.min(1, env.rainSheetAlpha * share)).setDepth(RAIN_DEPTH), 'rain');
+        this.rainLayers.push({ sprite, sheet: key, vx: env.rainFalls ? (orbit ? speed * 0.7 : speed * 0.22) : 0, vy: env.rainFalls ? (orbit ? -speed * 0.7 : -speed) : 0 });
       }
     }
-    if (env.rippleRate > 0) {
+    if (env.rippleRate > 0 && this.opts.map.vacuum !== true) {
       const view = this.cameras.main.worldView;
       this.rippleZone = new Phaser.Geom.Rectangle(view.x, view.y, view.width, view.height);
       const emitZone = { type: 'random', source: this.rippleZone, quantity: 1 } as Phaser.Types.GameObjects.Particles.ParticleEmitterRandomZoneConfig;
       keep(this.add.particles(0, 0, 'ripple', {
         emitZone, lifespan: 420, frequency: 4 / env.rippleRate, quantity: 1,
         scale: { start: 0.45, end: 1.15 }, alpha: { start: 0.75, end: 0 },
-      }).setDepth(-1.5));
+      }).setDepth(-1.5), 'ripples');
     }
+  }
+
+  /**
+   * Every decorative layer the scene currently draws (colour grade, wash, haze, fog, rain, ripples, motes, ambient
+   * world effects, cloud shadow, night, work sparks, and the lift and shuttle visuals), with its depth. Verification
+   * audits these against the lifecycle floor in depthBands.ts, and the pixel test hides or raises them as a set.
+   */
+  decorativeLayers(): { layer: string; depth: number; object: Phaser.GameObjects.GameObject }[] {
+    const out: { layer: string; depth: number; object: Phaser.GameObjects.GameObject }[] = [];
+    for (const o of this.children.list) {
+      const layer = o.getData?.('layer') as string | undefined;
+      if (layer) out.push({ layer, depth: (o as unknown as { depth: number }).depth, object: o });
+    }
+    for (const o of this.transit?.objects() ?? []) out.push({ layer: 'transit', depth: (o as unknown as { depth: number }).depth, object: o });
+    return out;
   }
 
   private weatherClock = 0;
@@ -633,6 +687,8 @@ export class TownScene extends Phaser.Scene {
     }
 
     this.updateStallLabels();
+    if (this.transit) { this.transit.setReducedMotion(this.app.environment.reducedMotion); this.transit.update(dt); }
+    this.ambient?.update(dt);
     this.updateWind(dt);
     this.updateWeather(dt);
     this.frameParity ^= 1;
@@ -694,7 +750,7 @@ export class TownScene extends Phaser.Scene {
       if (!station) continue;
       if (!label) {
         label = this.add.text(station.prop.x + 12, station.prop.y - 16, '', { fontFamily: 'monospace', fontSize: '6px', color: this.app.ui.scene.stallLabel, backgroundColor: this.app.ui.scene.labelBackground, padding: { x: 2, y: 1 } })
-          .setOrigin(0.5, 1).setResolution(6).setDepth(100001).setAlpha(0.95);
+          .setOrigin(0.5, 1).setResolution(6).setDepth(STALL_SIGN_DEPTH).setAlpha(0.95);
         this.stallLabels.set(stationId, label);
       }
       if (label.text !== skill) label.setText(skill);
@@ -733,8 +789,11 @@ export class TownScene extends Phaser.Scene {
     const x = Math.round(r.x), y = Math.round(r.y + 7);
     v.sprite.setPosition(x, y).setDepth(y);
     v.shadow.setPosition(x, y - 1).setDepth(y - 1);
-    v.name.setPosition(x, y + 1).setDepth(150000);
+    v.name.setPosition(x, y + 1).setDepth(LIFECYCLE_DEPTHS.name);
     const alpha = r.state === 'resting' ? 0.85 : r.fade;
+    // inside a lift or shuttle the resident is drawn as the passenger of its car or craft, never as a second figure
+    const inside = this.transit?.hidesRider(r) ?? false;
+    v.sprite.setVisible(!inside); v.shadow.setVisible(!inside);
     v.sprite.setAlpha(alpha);
     v.shadow.setAlpha(0.9 * alpha);
     v.name.setAlpha(0.9 * alpha);
@@ -753,11 +812,11 @@ export class TownScene extends Phaser.Scene {
     v.bubble.setVisible(show); v.bubbleBg.setVisible(show);
     if (show) {
       const by = y - FRAME_H - 2;
-      v.bubble.setPosition(x, by - 1).setDepth(160001);
-      v.bubbleBg.setPosition(x, by).setSize(v.bubble.width + 4, v.bubble.height + 2).setDepth(160000);
+      v.bubble.setPosition(x, by - 1).setDepth(LIFECYCLE_DEPTHS.bubble);
+      v.bubbleBg.setPosition(x, by).setSize(v.bubble.width + 4, v.bubble.height + 2).setDepth(LIFECYCLE_DEPTHS.bubbleBg);
     }
     if (r.emote) {
-      v.emote.setTexture(`emote-${r.emote}`).setVisible(true).setPosition(x + (show ? v.bubbleBg.width / 2 + 7 : 0), y - FRAME_H - 3 - Math.sin(r.clock * 6)).setDepth(160002);
+      v.emote.setTexture(`emote-${r.emote}`).setVisible(true).setPosition(x + (show ? v.bubbleBg.width / 2 + 7 : 0), y - FRAME_H - 3 - Math.sin(r.clock * 6)).setDepth(LIFECYCLE_DEPTHS.emote);
     } else {
       v.emote.setVisible(false);
     }

@@ -20,6 +20,8 @@ Every visible resident action maps to a real lifecycle event. Ambient smoke, spa
 - One authored town embedded in a larger countryside.
 - Simulation code under `src/sim/` contains no Phaser imports.
 - Tool name to place and work style is centralized in `src/sim/toolMap.ts`.
+- Lifts and shuttles (`src/world/transit.ts`) are route segments only: a resident already walking to a real station may ride one. They never create activity, state, history, stations or events, and are not part of the wire contract. The painted world layers (`src/art/cyberCity.ts`, `src/art/orbitalSystem.ts`, `src/scenes/worldAmbient.ts`) never draw agents.
+- Depth bands live in `src/scenes/depthBands.ts`. Every decorative layer (grade, wash, haze, fog, rain, night, cloud shadow, sparks, ambient and transit visuals) stays below building signs and the lifecycle indicators (name tags, bubbles, emotes). Use the named constants; never hard-code a depth above `WORLD_MAX`, and tag new decorative objects so `TownScene.decorativeLayers()` lists them.
 - The browser reads only the same-host Town snapshot and SSE endpoints.
 - The native Hermes plugin uses documented hooks and publishes an allowlisted payload.
 

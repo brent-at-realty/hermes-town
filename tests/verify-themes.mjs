@@ -51,7 +51,7 @@ ok('registry is internally consistent and every theme, kit and map validates', (
   assert.deepEqual(t.validateRegistry(), []);
 });
 ok('registry ids', () => {
-  assert.deepEqual(t.themeIds(), ['classic', 'night-market']);
+  assert.deepEqual(t.themeIds(), ['classic', 'night-market', 'cyber-city', 'orbital-system']);
   assert.ok(t.kitIds().includes('townsfolk') && t.kitIds().includes('market-folk'));
   assert.ok(t.mapIds().includes('town'));
 });

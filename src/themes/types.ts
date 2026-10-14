@@ -83,6 +83,14 @@ export interface ThemeArt {
   shadow: number;
 }
 
+/** A theme that ships as a complete, coherent pack: its own map, people and environment. */
+export interface ThemePack {
+  /** One line on what the pack changes. */
+  summary: string;
+  /** What the pack's map transit is, in plain words. It is shown whenever the map is chosen. */
+  routeNote: string;
+}
+
 export interface TownTheme {
   id: string;
   label: string;
@@ -95,6 +103,8 @@ export interface TownTheme {
   maps: { default: string; compatible: readonly string[] };
   art: ThemeArt;
   environment: EnvironmentProfile;
+  /** Present for a theme that has a one-click complete pack (theme, recommended people, map and environment together). */
+  pack?: ThemePack;
 }
 
 /**
@@ -108,7 +118,7 @@ export interface PeopleKit {
   description: string;
   /** Part of sprite-sheet cache keys. Empty for the original look. */
   textureTag: string;
-  hat?: 'none' | 'cap' | 'hood' | 'band' | 'brim' | 'goggles';
+  hat?: 'none' | 'cap' | 'hood' | 'band' | 'brim' | 'goggles' | 'visor' | 'helmet';
   hair?: readonly string[];
   cloth?: readonly string[];
   pants?: readonly string[];
@@ -133,6 +143,15 @@ export interface PeopleKit {
   hemBand?: string;
   /** Colour of the sleeves, when they differ from the body: shirt sleeves under a coloured tunic. */
   sleeve?: string;
+  /**
+   * A whole-figure silhouette: 'operative' is a long coat with a high collar, shoulder panels and a visor;
+   * 'crew' is a pressure suit with a round helmet and a back unit. Absent keeps the original build.
+   */
+  style?: 'operative' | 'crew';
+  /** The shell colour of a styled figure: the coat or suit that the profile colour is worn on. */
+  shell?: string;
+  /** A second accent colour of a styled figure (belt lights, helmet ring, boots). */
+  accent?: string;
   /** Preview swatches. */
   preview: readonly string[];
 }
@@ -169,6 +188,10 @@ export interface MapPreset {
   minimap?: MinimapTone;
   /** How the ground is painted: base colours and meadow dressing. Absent paints the original town's ground. */
   terrain?: TerrainStyle;
+  /** Wording for the weather choices on this map. The stored values stay clear, mist and rain: only the labels change. */
+  atmosphere?: 'orbit';
+  /** Shown when this map is chosen: what its lifts or shuttles are, and what they are not. */
+  routeNote?: string;
 }
 
 export type MinimapTone = Partial<UiPalette['minimap']> & { meadow?: string };

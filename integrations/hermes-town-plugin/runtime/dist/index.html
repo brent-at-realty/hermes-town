@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Hermes Town</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <script type="module" crossorigin src="/assets/index-CTzvvRuW.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-CtDPIMP5.css">
+    <script type="module" crossorigin src="/assets/index-C__Kyd9c.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CxmiZhO2.css">
   </head>
   <body>
     <div id="game"></div>
@@ -52,14 +52,21 @@
           <legend>Theme</legend>
           <div id="ap-themes" class="cards"></div>
         </fieldset>
+        <fieldset id="ap-packs-box">
+          <legend>Complete pack</legend>
+          <p class="hint">One click sets the theme, its recommended people, its map and its environment together. The controls below stay independent.</p>
+          <div id="ap-packs" class="packs"></div>
+        </fieldset>
         <label for="ap-people">People</label>
         <select id="ap-people"></select>
         <p class="hint" id="ap-people-hint"></p>
         <label for="ap-map">Map</label>
         <select id="ap-map"></select>
         <p class="hint" id="ap-map-hint"></p>
+        <p class="hint route" id="ap-route-note"></p>
         <div id="ap-map-note" class="note" hidden>
           <p>Changing the map reloads the renderer scene. Hermes and its bridge keep running; Town re-reads the current snapshot and draws the same residents. Nothing is restarted or replayed.</p>
+          <p id="ap-pending-route"></p>
           <button id="ap-map-apply" type="button">Reload scene with this map</button>
         </div>
         <fieldset>

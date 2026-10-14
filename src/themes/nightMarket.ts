@@ -45,7 +45,7 @@ export const NIGHT_MARKET: TownTheme = {
     },
   },
   people: 'market-folk',
-  maps: { default: 'town', compatible: ['town', 'greenwood'] },
+  maps: { default: 'town', compatible: ['town', 'greenwood', 'cyber-city', 'orbital-system'] },
   art: {
     worldTint: 0xd8d0f0,
     buildingTint: 0xe8def8,

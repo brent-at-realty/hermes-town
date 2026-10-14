@@ -14,15 +14,16 @@
     "serve:live": "node server/serve-live.mjs",
     "install:plugin": "node scripts/install-hermes-town-plugin.mjs",
     "typecheck": "tsc -b",
-    "test:contracts": "python3 tests/verify-plugin-privacy.py && node tests/verify-server-contract.mjs && node tests/verify-cron-seed.mjs && node tests/verify-shared-town.mjs && node tests/verify-themes.mjs",
-    "test": "npm run test:contracts && npm run build && npm run test:onboarding && npm run verify:characters && npm run verify:world && npm run verify:onboarding && npm run verify:appearance",
+    "test:contracts": "python3 tests/verify-plugin-privacy.py && node tests/verify-server-contract.mjs && node tests/verify-cron-seed.mjs && node tests/verify-shared-town.mjs && node tests/verify-themes.mjs && node tests/verify-worlds.mjs",
+    "test": "npm run test:contracts && npm run build && npm run test:onboarding && npm run verify:characters && npm run verify:world && npm run verify:onboarding && npm run verify:appearance && npm run verify:worlds",
     "package:plugin": "npm run build && node scripts/package-plugin.mjs",
     "check:package": "node scripts/package-plugin.mjs --check",
     "test:onboarding": "npm run check:package && node tests/verify-onboarding-server.mjs && node tests/verify-package.mjs && python3 tests/verify-town-cli.py",
     "verify:onboarding": "node scripts/verify-onboarding.mjs",
     "verify:characters": "node scripts/verify-characters.mjs && node scripts/verify-motion.mjs",
     "verify:world": "node scripts/verify-world.mjs",
-    "verify:appearance": "node scripts/verify-appearance.mjs && node scripts/verify-legibility.mjs"
+    "verify:appearance": "node scripts/verify-appearance.mjs && node scripts/verify-legibility.mjs",
+    "verify:worlds": "node scripts/verify-transit-worlds.mjs && node scripts/verify-worlds-rendered.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0"

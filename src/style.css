@@ -82,6 +82,10 @@ html, body { margin: 0; height: 100%; background: var(--ht-page); overflow: hidd
 #appearance .card .swatches i { width: 10px; height: 26px; }
 #appearance .card b { color: var(--ht-text-strong); font-weight: 600; }
 #appearance .card small { grid-column: 2; color: var(--ht-accent-soft); font-size: 10px; }
+#appearance .packs { display: grid; gap: 6px; }
+#appearance .pack { display: grid; gap: 2px; }
+#appearance .pack small { color: var(--ht-accent-soft); font-size: 10px; }
+#appearance .hint.route { color: var(--ht-status-demo); }
 #appearance .note { margin: 6px 0; padding: 6px 8px; border: 1px solid var(--ht-button-on-border); border-radius: 4px; }
 #appearance .note p { margin: 0 0 6px; }
 #appearance .actions { display: flex; flex-wrap: wrap; gap: 6px; }

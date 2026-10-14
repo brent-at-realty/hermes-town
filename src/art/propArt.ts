@@ -5,7 +5,7 @@ import type { PropKind } from '../world/map';
  * map validation read the same table: a map that places a prop with no entry
  * here is rejected before it can reach the scene.
  */
-export type PropArtSource = 'tree' | 'bush' | 'prop' | 'furniture' | 'equipment';
+export type PropArtSource = 'tree' | 'bush' | 'prop' | 'furniture' | 'equipment' | 'custom';
 
 export interface PropArtSpec {
   /** Texture key suffix: the scene registers `art-${key}`. */
@@ -37,6 +37,8 @@ export const PROP_ART: readonly PropArtSpec[] = [
   spec('telescope', 'equipment', 3, 23, 27), spec('postbox', 'equipment', 4, 13, 21), spec('desk', 'equipment', 5, 24, 18),
   spec('stall', 'equipment', 6, 24, 17),
   spec('hedge', 'bush', 0), spec('dock', 'prop', 4, 30, 18),
+  // The Cyber City and Orbital System workstations are painted in code (see worldProps.ts): no atlas, no remote art.
+  ...['terminal', 'fabBay', 'foundryRig', 'dispatchDock', 'scopeArray', 'commandConsole', 'loungeSeat', 'kiosk'].map((key) => spec(key, 'custom', 0)),
 ];
 
 const KEYS = new Set(PROP_ART.map((s) => s.key));

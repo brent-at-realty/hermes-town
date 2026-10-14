@@ -86,3 +86,29 @@ export function paintRipple(): HTMLCanvasElement {
   g.fillRect(6, 3, 2, 1);
   return canvas;
 }
+
+/**
+ * A seamless sheet of drifting solar particles for the Orbital System's "rain" setting: sparse warm streaks with a
+ * bright head, like a meteor shimmer. It is decoration drawn the way rain is, but it is not rain: there is none in
+ * vacuum.
+ */
+export function paintSolarSheet(seed: number, count: number, length: number, size = 256): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = size; canvas.height = size;
+  const g = canvas.getContext('2d')!;
+  const r = mulberry(seed);
+  const slant = 0.7;
+  for (let i = 0; i < count; i++) {
+    const x = r() * size, y = r() * size, len = length * (0.6 + r() * 0.8);
+    const warm = r() < 0.6;
+    for (const [ox, oy] of [[0, 0], [-size, 0], [size, 0], [0, -size], [0, size]] as const) {
+      const grad = g.createLinearGradient(x + ox, y + oy, x + ox - len * slant, y + oy + len);
+      grad.addColorStop(0, warm ? 'rgba(255,214,150,0.95)' : 'rgba(170,210,255,0.9)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      g.strokeStyle = grad; g.lineWidth = 1.2;
+      g.beginPath(); g.moveTo(x + ox, y + oy); g.lineTo(x + ox - len * slant, y + oy + len); g.stroke();
+      g.fillStyle = 'rgba(255,255,255,0.95)'; g.fillRect(x + ox - 0.5, y + oy - 0.5, 1.6, 1.6);
+    }
+  }
+  return canvas;
+}

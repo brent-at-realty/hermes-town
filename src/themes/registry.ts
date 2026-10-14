@@ -1,6 +1,8 @@
 import { CLASSIC } from './classic';
+import { CYBER_CITY } from './cyberCity';
 import { MAP_PRESETS } from './maps';
 import { NIGHT_MARKET } from './nightMarket';
+import { ORBITAL_SYSTEM } from './orbitalSystem';
 import { PEOPLE_KITS, TOWNSFOLK } from './people';
 import type { MapPreset, PeopleKit, TownTheme } from './types';
 
@@ -9,7 +11,7 @@ import type { MapPreset, PeopleKit, TownTheme } from './types';
  * HUD or simulation code branches on a theme id. `CLASSIC` is the default and
  * the fallback for anything unknown.
  */
-export const THEMES: readonly TownTheme[] = [CLASSIC, NIGHT_MARKET];
+export const THEMES: readonly TownTheme[] = [CLASSIC, NIGHT_MARKET, CYBER_CITY, ORBITAL_SYSTEM];
 export const DEFAULT_THEME_ID = CLASSIC.id;
 export const MAPS: readonly MapPreset[] = MAP_PRESETS;
 export const KITS: readonly PeopleKit[] = PEOPLE_KITS;

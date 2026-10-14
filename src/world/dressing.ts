@@ -11,6 +11,9 @@ export const PROP_ANCHORS: Partial<Record<PropKind, readonly [number, number]>> 
   banner: [12, 30], flowerBox: [18, 10], planter: [14, 16],
   fountain: [36, 30], chapel: [40, 46], marketStall0: [30, 28], marketStall1: [30, 28],
   hedge: [16, 12], dock: [20, 14],
+  // Cyber City and Orbital System workstations
+  terminal: [16, 18], fabBay: [24, 17], foundryRig: [22, 18], dispatchDock: [18, 16],
+  scopeArray: [18, 20], commandConsole: [24, 14], loungeSeat: [18, 13], kiosk: [22, 18],
 };
 
 export const hasWorldSprite = (kind: PropKind): boolean => kind in PROP_ANCHORS;
