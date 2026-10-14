@@ -2,9 +2,9 @@
 
 All notable changes to Hermes Town Brent (formerly published as Hermes Town) are documented here.
 
-## Unreleased
+## 0.6.0 - 2026-10-14
 
-Version rationale: minor, presentation only. No wire protocol, plugin id, state layout, lifecycle or privacy change; the version is bumped at release.
+Version rationale: minor, presentation only. No wire protocol, plugin id, state layout, lifecycle or privacy change.
 
 ### Appearance: two complete world packs, Cyber City and Orbital System
 
