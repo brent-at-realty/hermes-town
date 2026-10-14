@@ -2,6 +2,13 @@
 
 All notable changes to Hermes Town Brent (formerly published as Hermes Town) are documented here.
 
+## Unreleased
+
+### Fix: the minimap redraws from the mounted map after Apply and Reset
+
+- The minimap was drawn only from `requestAnimationFrame`. A background or occluded tab pauses frames while the Town renderer (timer driven) keeps running, so a Greenwood Apply or a Reset left the previous map on the minimap. A timer now redraws when no frame has, a failed draw cannot end the loop, and a map reload redraws immediately. No map, renderer, resident, legend or bridge behaviour changes.
+- `npm run verify:appearance` now pauses frames in demo and live, and compares the full `#minimap` PNG data (residents removed, overview camera) across Apply, Reset, a share link and a saved view: Greenwood must differ materially from Town and Reset must restore the exact Town data.
+
 ## 0.5.1 - 2026-10-14
 
 Version rationale: patch release; Appearance bug fix only. No wire protocol, plugin id, state layout or lifecycle-privacy change.

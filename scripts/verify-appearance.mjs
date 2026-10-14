@@ -696,6 +696,96 @@ try {
     } finally { await hostTown.close(); }
   }
 
+  // ============================== the minimap follows the mounted map, with frames paused
+  // A background or occluded tab stops requestAnimationFrame while the Town renderer (timer driven) keeps
+  // running. The minimap must still redraw from the mounted TownMap after every Apply, Reset, link and saved
+  // view. Each capture is the full PNG data of #minimap with the residents removed and the camera at the
+  // overview, so the only thing that can differ is the map; comparisons are exact, not a sampled hash.
+  {
+    const sha = (s) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 16);
+    const miniData = (page) => page.evaluate(() => document.querySelector('#minimap').toDataURL('image/png'));
+    const pauseFrames = () => {
+      const raf = window.requestAnimationFrame.bind(window);
+      window.__framesPaused = false;
+      window.requestAnimationFrame = (cb) => (window.__framesPaused ? 0 : raf(cb));
+    };
+    const quiet = async (page, label, notEqual = null) => {
+      await page.waitForFunction(() => window.__town.runtime.scene()?.textures.exists('art-tree0') && window.__town.sim.residents.size > 0, null, { timeout: 30000, polling: 100 });
+      await frozen(page);
+      await page.evaluate(() => { const t = window.__town; t.sim.residents.clear(); const s = t.runtime.scene(); s.setDirector(true); s.overview(); });
+      let prev = null;
+      for (let i = 0; i < 40; i++) {
+        await page.waitForTimeout(300);
+        const cur = await miniData(page);
+        if (cur === prev && (notEqual === null || cur !== notEqual)) return cur;
+        prev = cur;
+      }
+      assert.fail(`${label}: the minimap never settled on a redraw of the mounted map`);
+    };
+    const mounted = (page) => page.evaluate(() => ({ map: window.__town.runtime.preset.id, trees: window.__town.map.props.filter((p) => p.kind === 'tree').length, framesPaused: window.__framesPaused }));
+    const applyMap = async (page, id) => {
+      await page.evaluate(() => { const p = document.querySelector('#appearance'); if (p.hidden) document.querySelector('#appearance-toggle').click(); });
+      await page.selectOption('#ap-map', id);
+      await page.click('#ap-map-apply');
+      await page.waitForFunction((want) => window.__town.runtime.preset.id === want, id, { timeout: 30000, polling: 100 });
+    };
+    const resetView = async (page) => {
+      await page.evaluate(() => { const p = document.querySelector('#appearance'); if (p.hidden) document.querySelector('#appearance-toggle').click(); });
+      await page.click('#ap-reset');
+      await page.waitForFunction(() => window.__town.runtime.preset.id === 'town', null, { timeout: 30000, polling: 100 });
+    };
+    const pixels = (a, b) => imageDiff(Buffer.from(a.split(',')[1], 'base64'), Buffer.from(b.split(',')[1], 'base64'), 16);
+    receipts.minimapFollowsMount = {};
+
+    for (const [mode, url] of [['demo', `${base}/?agents=demo&hour=12`], ['live', base]]) {
+      const ctx = await browser.newContext({ viewport: { width: 1672, height: 940 } });
+      await ctx.addInitScript(pauseFrames);
+      const page = await ctx.newPage();
+      page.on('pageerror', (e) => errors.push(`minimap ${mode}: ${e.message}`));
+      await page.goto(url);
+      await page.evaluate(() => { window.__framesPaused = true; });
+      const townState = await mounted(page);
+      assert.equal(townState.map, 'town'); assert.equal(townState.framesPaused, true);
+      const townMini = await quiet(page, `${mode} Town`);
+
+      await applyMap(page, 'greenwood');
+      const greenState = await mounted(page);
+      assert.equal(greenState.map, 'greenwood'); assert.ok(greenState.trees > townState.trees, 'the scene map is the Greenwood map');
+      const greenMini = await quiet(page, `${mode} Greenwood apply`, townMini);
+      assert.notEqual(greenMini, townMini, `${mode}: Apply changes the minimap data`);
+      const diff = await pixels(townMini, greenMini);
+      assert.ok(diff.sameSize && diff.ratio > 0.1, `${mode}: the Greenwood minimap is materially different (${diff.ratio})`);
+
+      await resetView(page);
+      const resetState = await mounted(page);
+      assert.equal(resetState.map, 'town'); assert.equal(resetState.trees, townState.trees);
+      const resetMini = await quiet(page, `${mode} Reset`, greenMini);
+      assert.equal(resetMini, townMini, `${mode}: Reset restores the exact Town minimap`);
+
+      // Greenwood again, then a saved view in a fresh page whose frames are paused from the first moment
+      await applyMap(page, 'greenwood');
+      assert.equal(await quiet(page, `${mode} Greenwood again`, townMini), greenMini, `${mode}: Greenwood draws the same minimap every time`);
+      await page.evaluate(() => document.querySelector('#ap-save').click());
+      for (const [how, address] of [['link', `${url}${url.includes('?') ? '&' : '?'}map=greenwood`], ['saved view', url]]) {
+        const fresh = await ctx.newPage();
+        await fresh.addInitScript(() => { window.__framesPaused = true; });
+        fresh.on('pageerror', (e) => errors.push(`minimap ${mode} ${how}: ${e.message}`));
+        await fresh.goto(address);
+        const loaded = await mounted(fresh);
+        assert.equal(loaded.map, 'greenwood'); assert.equal(loaded.framesPaused, true);
+        assert.equal(await quiet(fresh, `${mode} ${how} load`), greenMini, `${mode}: a ${how} draws the mounted Greenwood minimap`);
+        await fresh.close();
+      }
+      receipts.minimapFollowsMount[mode] = {
+        town: { runtime: townState, bytes: townMini.length, sha256: sha(townMini) },
+        greenwood: { runtime: greenState, bytes: greenMini.length, sha256: sha(greenMini), pixelsChangedFromTown: +diff.ratio.toFixed(3) },
+        reset: { runtime: resetState, bytes: resetMini.length, sha256: sha(resetMini), identicalToTown: resetMini === townMini },
+        loadPaths: ['apply', 'reset', 'link', 'saved view'],
+      };
+      await ctx.close();
+    }
+  }
+
   // ====================================================== disconnected live
   {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
