@@ -2,7 +2,7 @@ import { T, TILE } from '../art/tiles';
 import { profileColorFor } from '../art/profileColors';
 import type { TownSim } from '../sim/town';
 import type { TownMap } from '../world/map';
-import type { UiPalette } from '../themes/types';
+import type { MinimapTone, UiPalette } from '../themes/types';
 import type { TownScene } from '../scenes/TownScene';
 
 /** What the minimap needs from the running Town. All of it is read at draw time, so a map switch only swaps the getters' targets. */
@@ -11,7 +11,24 @@ export interface MinimapSource {
   sim(): TownSim;
   scene(): TownScene | null;
   selectedId(): string | null;
-  palette(): UiPalette['minimap'];
+  palette(): MinimapPalette;
+}
+
+/** The theme's minimap colours, optionally overridden by the mounted map's own tone. */
+export type MinimapPalette = UiPalette['minimap'] & { meadow?: string };
+
+const merged = new WeakMap<object, WeakMap<object, MinimapPalette>>();
+/**
+ * Fold a map's own minimap colours over the theme's. The result is cached by
+ * identity so the minimap only repaints its base when the palette really changes.
+ */
+export function minimapPalette(base: UiPalette['minimap'], tone: MinimapTone | undefined): MinimapPalette {
+  if (!tone) return base;
+  let byTone = merged.get(base);
+  if (!byTone) { byTone = new WeakMap(); merged.set(base, byTone); }
+  let out = byTone.get(tone);
+  if (!out) { out = { ...base, ...Object.fromEntries(Object.entries(tone).filter(([, v]) => v !== undefined)) } as MinimapPalette; byTone.set(tone, out); }
+  return out;
 }
 
 /**
@@ -36,9 +53,9 @@ export function createMinimap(canvas: HTMLCanvasElement, src: MinimapSource): { 
   ctx.imageSmoothingEnabled = false;
   let base: HTMLCanvasElement | null = null;
   let baseMap: TownMap | null = null;
-  let basePalette: UiPalette['minimap'] | null = null;
+  let basePalette: MinimapPalette | null = null;
 
-  const paintBase = (map: TownMap, p: UiPalette['minimap']): HTMLCanvasElement => {
+  const paintBase = (map: TownMap, p: MinimapPalette): HTMLCanvasElement => {
     const w = map.grid.w, h = map.grid.h;
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
@@ -50,6 +67,7 @@ export function createMinimap(canvas: HTMLCanvasElement, src: MinimapSource): { 
         : t === T.path || t === T.path2 || t === T.bridge ? p.path
         : t === T.trail || t === T.trail2 ? p.trail
         : t === T.grassDry || t === T.grassDry2 || t === T.seed0 ? p.grassDry
+        : p.meadow !== undefined && (t === T.flwWhite0 || t === T.flwWhite1 || t === T.flwBlue0 || t === T.flwBlue1 || t === T.flwYellow0 || t === T.flwYellow1) ? p.meadow
         : t === T.grassWet || t === T.grassWet2 || t === T.mudWet ? p.grassWet
         : t === T.ledge || t === T.cliff ? p.ledge
         : p.grass;

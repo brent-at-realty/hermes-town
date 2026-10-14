@@ -22,7 +22,7 @@
     "verify:onboarding": "node scripts/verify-onboarding.mjs",
     "verify:characters": "node scripts/verify-characters.mjs && node scripts/verify-motion.mjs",
     "verify:world": "node scripts/verify-world.mjs",
-    "verify:appearance": "node scripts/verify-appearance.mjs"
+    "verify:appearance": "node scripts/verify-appearance.mjs && node scripts/verify-legibility.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0"

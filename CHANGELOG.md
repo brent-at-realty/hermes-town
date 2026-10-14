@@ -2,6 +2,18 @@
 
 All notable changes to Hermes Town Brent (formerly published as Hermes Town) are documented here.
 
+## Unreleased
+
+Version rationale: patch release; presentation only. No wire protocol, plugin id, state layout, lifecycle or privacy change.
+
+### Appearance: the choices are now bold at normal viewing scale
+
+- **People kits read at a glance.** `Market folk` get a wide plumed hat with a tall crimson plume, a gold sash and a crimson hem band on a gold-edged coat; `Plain clothes` are bare-headed, short-haired, in a cropped jacket over linen sleeves and pale trousers. New optional kit fields (`hairStyle`, `sash`, `hemBand`, `sleeve`) are validated by the registry. Profile colour is still applied last and is the body colour in every kit; resident ids, state and history are untouched.
+- **Mist is layered fog.** Three seamless, procedurally painted fog banks of different scale drift in different directions over the whole visible world, with clear gaps, below name tags, bubbles and emotes, plus a pale wash. Under reduced motion the banks hold still but stay on screen.
+- **Rain is dense and coherent.** Two sheets of slanted streaks fall across the whole world, with ground ripples over the camera area and a cool wash. Under reduced motion the sheets hold still at half strength as a static cue; streaks and ripples stop falling. All decorative.
+- **Greenwood is a different place.** A great lake across the south-west plus the west meadow lake, open flower meadows with painted blossoms, sparser groves, relocated orchards, glades and hedgerow, a map-specific ground colour (`MapPreset.terrain`) and minimap colours (`MapPreset.minimap`). Buildings, homes, stations, doors, porches and the entrance are unchanged (asserted), the Town map is byte-identical, and every station stays reachable.
+- **Verification.** New `scripts/verify-legibility.mjs` (run by `npm run verify:appearance`) measures the canvas and minimap at a live-style viewport and the default overview. `tests/verify-themes.mjs` checks the visible lake and flower share of Greenwood's opening camera.
+
 ## 0.5.2 - 2026-10-14
 
 Version rationale: patch release; minimap redraw fix only. No wire protocol, plugin id, state layout or lifecycle-privacy change.

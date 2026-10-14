@@ -4,8 +4,8 @@ import type { MapPreset, MapView } from './types';
 /** The overview framing the original town has always used. */
 const TOWN_VIEW: MapView = { centerX: 52, centerY: 40, fitW: 90, fitH: 50 };
 
-/** Greenwood frames a slightly wider, taller span so the lake, the orchards and the glade are in the opening view. */
-const GREENWOOD_VIEW: MapView = { centerX: 52, centerY: 41, fitW: 96, fitH: 54 };
+/** Greenwood frames a wider, taller span so the great lake, the orchards, the meadows and the glades are all in the opening view. */
+const GREENWOOD_VIEW: MapView = { centerX: 52, centerY: 41, fitW: 98, fitH: 56 };
 
 /**
  * Registered world maps. A map is a factory for the existing `TownMap`
@@ -28,6 +28,9 @@ export const MAP_PRESETS: readonly MapPreset[] = [
     description: 'The same streets and buildings, in a greener setting: a broad lake, dense groves, orchards in rows and flower glades.',
     build: () => buildGreenwoodMap(),
     view: GREENWOOD_VIEW,
-    tone: 0xd6f0d2,
+    // The ground is painted brighter and bluer-watered, with blossoms on the flower tiles; trees take a spring tone.
+    tone: 0xeaffdc,
+    terrain: { grass: [102, 140, 56], water: [44, 114, 152], swing: 1.5, meadow: true },
+    minimap: { grass: '#6c9c3a', grassWet: '#5d9a3e', grassDry: '#6c9c3a', water: '#3b86b8', tree: '#356f2a', trail: '#9a8a52', meadow: '#c9d86a' },
   },
 ];

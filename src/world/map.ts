@@ -485,7 +485,7 @@ export function buildTownMap(variant = 0): TownMap {
  * come from the same authored town.
  */
 export function buildGreenwoodMap(): TownMap {
-  return buildCountryside(buildTownLocal(4355, { treeTarget: 270, flowerClusters: 240 }), 1, 'greenwood');
+  return buildCountryside(buildTownLocal(4355, { treeTarget: 160, flowerClusters: 320 }), 1, 'greenwood');
 }
 
 export function tileCenter(p: Point): { x: number; y: number } {

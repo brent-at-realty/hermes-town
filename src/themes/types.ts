@@ -125,6 +125,14 @@ export interface PeopleKit {
   satchel?: boolean;
   /** Draw the belt (default) or leave it off. */
   belt?: boolean;
+  /** Hair style for every resident in the kit. Absent keeps each resident's own. */
+  hairStyle?: 'short' | 'long' | 'bun' | 'bald' | 'mohawk';
+  /** A baldric worn shoulder to hip, in an accent colour. Edged in the hat colour. */
+  sash?: string;
+  /** A band along the coat hem. */
+  hemBand?: string;
+  /** Colour of the sleeves, when they differ from the body: shirt sleeves under a coloured tunic. */
+  sleeve?: string;
   /** Preview swatches. */
   preview: readonly string[];
 }
@@ -138,6 +146,8 @@ export interface MapView {
   fitH: number;
 }
 
+import type { TerrainStyle } from '../art/terrain';
+
 export interface MapPreset {
   id: string;
   label: string;
@@ -150,7 +160,18 @@ export interface MapPreset {
    * map's own character (greener, drier) readable at a glance.
    */
   tone?: number;
+  /**
+   * Minimap colours that replace the theme's for this map only, so the minimap
+   * shows the map's own character (its lakes, meadows and groves) and agrees
+   * with the main canvas. `meadow` colours flower tiles, which the theme
+   * palette has no class for.
+   */
+  minimap?: MinimapTone;
+  /** How the ground is painted: base colours and meadow dressing. Absent paints the original town's ground. */
+  terrain?: TerrainStyle;
 }
+
+export type MinimapTone = Partial<UiPalette['minimap']> & { meadow?: string };
 
 export interface Choice {
   /** Theme id. */

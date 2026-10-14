@@ -158,15 +158,22 @@ export function buildCountryside(local: TownMap, variant = 0, style: Countryside
   stroke(wobble([{ x: 10, y: 37 }, { x: 8, y: 48 }, { x: cartSpot.x, y: cartSpot.y - 1 }], r, 1.2), 1, putTrail);
   stroke(wobble([{ x: 100, y: 40 }, { x: 104, y: 30 }, { x: 98, y: 20 }], r, 1.2), 1, putTrail);
 
-  // Greenwood: a broad lake in the west meadow, kept clear of every road and trail.
+  // Greenwood: a broad lake in the west meadow and a far larger one across the south-west, kept clear of every road and trail.
+  // Both sit inside the opening camera, so the first screen of Greenwood is a place with water in it, not a town with more trees.
   if (green) {
-    const ln = valueNoise(41);
+    const ln = valueNoise(41), ls = valueNoise(43);
     const clearOf = (x: number, y: number): boolean => {
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (road.has(key(x + dx, y + dy)) || trail.has(key(x + dx, y + dy))) return false;
       return true;
     };
     for (let y = 10; y <= 25; y++) for (let x = 7; x <= 25; x++) {
       if (Math.hypot((x - 18.5) / 1.6, (y - 19.5) * 0.85) < 4.6 + (ln(x * 0.4, y * 0.4) - 0.5) * 2 && clearOf(x, y)) putWater(x, y);
+    }
+    // the great lake: a long shore with two bays, from the south-west corner toward the south road
+    for (let y = 52; y <= 73; y++) for (let x = 2; x <= 47; x++) {
+      const bay = Math.sin((x - 2) * 0.33) * 1.1;
+      const d = Math.hypot((x - 24) / 21, (y - 63.5 - bay) / 7.2) + (ls(x * 0.3, y * 0.3) - 0.5) * 0.22;
+      if (d < 1 && clearOf(x, y) && !(x >= TOWN_OX - 1 && y < TOWN_OY + LOCAL_H + 1)) putWater(x, y);
     }
   }
 
@@ -221,7 +228,7 @@ export function buildCountryside(local: TownMap, variant = 0, style: Countryside
     // so the transitions dither instead of stepping
     const smooth = (t: number) => { const k = Math.max(0, Math.min(1, t)); return k * k * (3 - 2 * k); };
     // Greenwood is lush: no parched rises, a damp tone on the low ground and in the groves.
-    const wet = green ? Math.max(smooth((0.38 - h) / 0.14), 0.3) : smooth((0.38 - h) / 0.14);
+    const wet = green ? Math.max(smooth((0.38 - h) / 0.14), 0.06) : smooth((0.38 - h) / 0.14);
     const dry = green ? 0 : smooth((h - 0.6) / 0.14);
     const r2 = r();
     let out = g === T.grassTall || g === T.flowers || g === T.rocks ? T.grass : g;
@@ -231,7 +238,7 @@ export function buildCountryside(local: TownMap, variant = 0, style: Countryside
     if (h < 0.24 && c > 0.6 && roll2 < 0.7) out = T.mudWet;
     else if (dry > 0.5 && c > 0.5 && roll2 < 0.75) out = T.seed0;
     else if (c > 0.63 && h > 0.3 && h < 0.72 && roll2 < 0.75) out = T.tall0;
-    else if (c < (green ? 0.42 : 0.26) && roll2 < (green ? 0.62 : 0.45)) out = h < 0.42 ? T.flwWhite0 : h < 0.6 ? T.flwBlue0 : T.flwYellow0;
+    else if (c < (green ? 0.5 : 0.26) && roll2 < (green ? 0.7 : 0.45)) out = h < 0.42 ? T.flwWhite0 : h < 0.6 ? T.flwBlue0 : T.flwYellow0;
     else if (grad(x, y) > 0.06 && d > 0.6 && roll2 < 0.45) out = roll < 0.4 ? T.earth : roll < 0.7 ? T.earth2 : T.rocks;
     else if (roll2 < 0.01) out = T.mossStone;
     else if (roll2 < 0.025 && h > 0.45) out = T.gravel2;
@@ -325,8 +332,8 @@ export function buildCountryside(local: TownMap, variant = 0, style: Countryside
       treeCells.add(key(x, y));
       block(x, y);
     };
-    // Two orchards of evenly spaced fruit trees, set out in offset rows.
-    for (const o of [{ x: 36, y: 59, cols: 6, rows: 4 }, { x: 15, y: 42, cols: 4, rows: 4 }]) {
+    // Two orchards of evenly spaced fruit trees, set out in offset rows: one on the west bank above the great lake, one on the east bank of the stream.
+    for (const o of [{ x: 93, y: 42, cols: 4, rows: 4 }, { x: 15, y: 42, cols: 4, rows: 4 }]) {
       keepClear.push({ x: o.x - 3, y: o.y - 4, w: o.cols * 3 + 7, h: o.rows * 3 + 7 });
       // mown grass between the rows, so the planting reads as an orchard and not as more wood
       for (let y = o.y - 2; y <= o.y + o.rows * 3; y++) for (let x = o.x - 2; x <= o.x + o.cols * 3 + 1; x++) {
@@ -339,14 +346,14 @@ export function buildCountryside(local: TownMap, variant = 0, style: Countryside
         if (free(tx, ty)) plant(tx, ty, (col + row) % 2);
       }
     }
-    // A hedgerow along the west side of the south orchard, with a gate gap.
-    for (let y = 59; y <= 71; y++) {
-      if (y === 64 || y === 65 || !free(34, y)) continue;
-      extra.push({ kind: 'hedge', x: 34 * TILE, y: y * TILE + 3, blocks: [{ x: 34, y }] });
-      block(34, y);
+    // A hedgerow along the west side of the east orchard, with a gate gap.
+    for (let y = 42; y <= 55; y++) {
+      if (y === 48 || y === 49 || !free(91, y)) continue;
+      extra.push({ kind: 'hedge', x: 91 * TILE, y: y * TILE + 3, blocks: [{ x: 91, y }] });
+      block(91, y);
     }
     // Flower glades: open ground bright with blooms, a bench in the middle.
-    for (const gl of [{ x: 95, y: 47, r: 4 }, { x: 107, y: 50, r: 5 }]) {
+    for (const gl of [{ x: 96, y: 30, r: 5 }, { x: 6, y: 47, r: 3 }, { x: 80, y: 66, r: 4 }]) {
       keepClear.push({ x: gl.x - gl.r - 2, y: gl.y - gl.r - 2, w: gl.r * 2 + 5, h: gl.r * 2 + 5 });
       for (let y = gl.y - gl.r; y <= gl.y + gl.r; y++) for (let x = gl.x - gl.r; x <= gl.x + gl.r; x++) {
         if (!inb(x, y) || Math.hypot(x - gl.x, (y - gl.y) * 1.2) > gl.r) continue;
@@ -364,7 +371,7 @@ export function buildCountryside(local: TownMap, variant = 0, style: Countryside
 
   // ---- trees: woods where the forest field is high, thinning to open grass
   let placed = 0, tries = 0;
-  const woodTarget = green ? 1000 : 560, woodTries = green ? 160000 : 90000;
+  const woodTarget = green ? 400 : 560, woodTries = green ? 160000 : 90000;
   while (placed < woodTarget && tries++ < woodTries) {
     const x = 1 + Math.floor(r() * (MAP_W - 2)), y = 2 + Math.floor(r() * (MAP_H - 3));
     if (inTown(x, y)) continue;
@@ -373,7 +380,7 @@ export function buildCountryside(local: TownMap, variant = 0, style: Countryside
     // the woods press right up to the town's hedge
     const nearTown = x >= TOWN_OX - 4 && x < TOWN_OX + LOCAL_W + 4 && y >= TOWN_OY - 4 && y < TOWN_OY + LOCAL_H + 4;
     const want = green
-      ? (edge ? 0.92 : nearTown ? 0.72 : f > 0.5 ? 0.88 : f > 0.4 ? 0.5 : 0.05)
+      ? (edge ? 0.92 : nearTown ? 0.3 : f > 0.58 ? 0.85 : f > 0.5 ? 0.22 : 0.008)
       : (edge ? 0.85 : nearTown ? 0.6 : f > 0.58 ? 0.75 : f > 0.48 ? 0.3 : 0.03);
     if (r() > want) continue;
     if (inKeepClear(x, y)) continue;
@@ -401,7 +408,7 @@ export function buildCountryside(local: TownMap, variant = 0, style: Countryside
     if (below !== undefined && (GRASS_FAMILY.has(below) || below === T.grassWet || below === T.grassDry) && r() < 0.45) ground[y + 1]![x] = r() < 0.7 ? T.leaves : T.clover;
   }
   // bushes in loose clusters at wood edges
-  for (let i = 0; i < (green ? 900 : 650); i++) {
+  for (let i = 0; i < (green ? 500 : 650); i++) {
     const x = 1 + Math.floor(r() * (MAP_W - 2)), y = 2 + Math.floor(r() * (MAP_H - 3));
     if (inTown(x, y) || cost[key(x, y)] !== 3 || inKeepClear(x, y)) continue;
     const f = fbm(fn, x + 300, y + 300, 3, 16);

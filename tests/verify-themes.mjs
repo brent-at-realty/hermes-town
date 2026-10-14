@@ -217,15 +217,34 @@ ok('Greenwood is materially different from Town: ground, water, woods, orchards,
   for (let y = 0; y < a.grid.h; y++) for (let x = 0; x < a.grid.w; x++) if (a.ground[y][x] !== b.ground[y][x]) differing += 1;
   assert.ok(differing / (a.grid.w * a.grid.h) > 0.3, `only ${differing} ground tiles differ`);
   const ca = census(a), cb = census(b);
-  assert.ok(cb.water >= ca.water + 80, `water ${ca.water} -> ${cb.water}`);
-  assert.ok(cb.trees >= ca.trees + 60, `trees ${ca.trees} -> ${cb.trees}`);
-  assert.ok(cb.flowers > ca.flowers * 1.4, `flowers ${ca.flowers} -> ${cb.flowers}`);
+  assert.ok(cb.water >= ca.water * 2, `water ${ca.water} -> ${cb.water}`);
+  assert.ok(cb.trees <= ca.trees * 0.9, `Greenwood is open meadow: trees ${ca.trees} -> ${cb.trees}`);
+  assert.ok(cb.flowers > ca.flowers * 4, `flowers ${ca.flowers} -> ${cb.flowers}`);
   assert.ok(cb.hedges > ca.hedges, `hedgerow ${ca.hedges} -> ${cb.hedges}`);
   assert.equal(cb.dry, 0, 'Greenwood has no parched grass');
   assert.ok(ca.dry > 0, 'the original town keeps its dry grass');
   assert.notEqual(t.findMap('greenwood').tone, undefined);
   assert.equal(t.findMap('town').tone, undefined);
   assert.notDeepEqual(t.findMap('greenwood').view, t.findMap('town').view);
+});
+// What matters to a viewer is what is inside the opening camera, not the whole world.
+const inView = (preset, pred) => {
+  const m = preset.build(), v = preset.view;
+  const x0 = Math.max(0, Math.floor(v.centerX - v.fitW / 2)), x1 = Math.min(m.grid.w, Math.ceil(v.centerX + v.fitW / 2));
+  const y0 = Math.max(0, Math.floor(v.centerY - v.fitH / 2)), y1 = Math.min(m.grid.h, Math.ceil(v.centerY + v.fitH / 2));
+  let n = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) if (pred(m.ground[y][x])) n += 1;
+  return n / ((x1 - x0) * (y1 - y0));
+};
+ok('Greenwood has a lake and flower meadows in its opening camera, far beyond the Town\'s', () => {
+  const town = t.findMap('town'), green = t.findMap('greenwood');
+  const flw = new Set([t.T.flwWhite0, t.T.flwWhite1, t.T.flwBlue0, t.T.flwBlue1, t.T.flwYellow0, t.T.flwYellow1]);
+  const waterShare = [inView(town, (g) => WATER.has(g)), inView(green, (g) => WATER.has(g))];
+  const flowerShare = [inView(town, (g) => flw.has(g)), inView(green, (g) => flw.has(g))];
+  assert.ok(waterShare[1] >= 0.1 && waterShare[1] >= waterShare[0] * 1.6, `visible water ${waterShare}`);
+  assert.ok(flowerShare[1] >= 0.15 && flowerShare[1] >= flowerShare[0] * 4, `visible flowers ${flowerShare}`);
+  assert.ok(green.terrain && green.terrain.meadow === true && town.terrain === undefined, 'Greenwood paints its own ground; the Town keeps the original');
+  assert.ok(green.minimap && town.minimap === undefined, 'Greenwood has its own minimap colours; the Town keeps the theme\'s');
 });
 ok('Greenwood orchards stand in evenly spaced rows', () => {
   const b = t.findMap('greenwood').build();
@@ -259,7 +278,7 @@ ok('Greenwood has no new tree, hedge, bench or lamp on a road, trail or bridge o
 // -------------------------------------------------------- people kit visuals
 ok('every non-default kit changes the visible outfit of every role, and keeps the profile colour', () => {
   const roles = ['coordinator', 'research', 'fabrication', 'review', 'tooling', 'general', 'scheduled'];
-  const fields = ['hat', 'garment', 'apron', 'beard', 'belt', 'satchel', 'trim', 'hatColor', 'plume', 'pants', 'hair', 'cloth'];
+  const fields = ['hat', 'garment', 'apron', 'beard', 'belt', 'satchel', 'trim', 'hatColor', 'plume', 'sash', 'hemBand', 'sleeve', 'hairStyle', 'pants', 'hair', 'cloth'];
   for (const kitId of ['market-folk', 'plainclothes']) {
     const kit = t.findKit(kitId);
     for (const role of roles) for (const cloth of [undefined, '#2e6fd0']) {
@@ -274,7 +293,9 @@ ok('every non-default kit changes the visible outfit of every role, and keeps th
   assert.deepEqual([market.hat, market.garment], ['brim', 'coat']);
   assert.ok(market.trim && market.hatColor && market.plume);
   const plain = t.applyPeopleKit(t.lookFor('p', 'fabrication'), t.findKit('plainclothes'), 'p');
-  assert.deepEqual([plain.hat, plain.garment, plain.apron, plain.beard, plain.belt, plain.satchel], ['none', 'tunic', false, false, false, false]);
+  assert.deepEqual([plain.hat, plain.garment, plain.apron, plain.beard, plain.belt, plain.satchel], ['none', 'jacket', false, false, false, false]);
+  assert.deepEqual([plain.hairStyle, plain.sleeve], ['short', '#e6dcc4'], 'Plain clothes: short hair and linen sleeves');
+  assert.ok(market.sash && market.hemBand && market.satchel === false, 'Market folk carry a sash and a hem band instead of a satchel strap');
   const plainFab = t.lookFor('p', 'fabrication');
   assert.equal(plainFab.apron, true, 'townsfolk fabricators keep their apron');
 });
@@ -473,6 +494,17 @@ ok('reduced motion lowers decorative movement and particle intensity', () => {
   assert.equal(reduced.rain, false, 'rain streaks are movement; the dimming stays');
   assert.equal(reduced.weather, 'rain');
   assert.ok(reduced.extraDim > 0);
+});
+ok('weather resolves to bold, readable layers, and reduced motion keeps a static cue', () => {
+  const env = (weather, motion) => t.resolveAppearance({ ...t.DEFAULT_CHOICE, motion, weather }, system(false)).environment;
+  const clear = env('clear', 'full'), mist = env('mist', 'full'), rain = env('rain', 'full');
+  const mistRm = env('mist', 'reduced'), rainRm = env('rain', 'reduced');
+  assert.deepEqual([clear.fogAlpha, clear.rainSheetAlpha, clear.rippleRate, clear.wash], [0, 0, 0, null], 'clear weather adds nothing');
+  assert.ok(mist.fogAlpha >= 0.4 && mist.fogDrift > 0, 'mist is a strong, drifting fog layer');
+  assert.ok(rain.rainSheetAlpha >= 0.5 && rain.rainFalls && rain.rippleRate > 0 && rain.wash, 'rain is dense, falls, ripples and washes the world');
+  assert.ok(mistRm.fogAlpha >= 0.35 && mistRm.fogDrift === 0, 'reduced motion: fog stays, stops drifting');
+  assert.ok(rainRm.rainSheetAlpha > 0 && rainRm.rainSheetAlpha < rain.rainSheetAlpha && !rainRm.rainFalls && rainRm.rippleRate === 0 && rainRm.rain === false, 'reduced motion: a gentler static rain cue, no falling streaks or ripples');
+  for (const w of t.WEATHER_OPTIONS) assert.ok([w.fog, w.rainSheet].every((n) => n >= 0 && n <= 1) && (w.wash === null || (w.wash.alpha >= 0 && w.wash.alpha <= 0.6)), `weather ${w.id} stays inside its bounds`);
 });
 
 // ------------------------------------------------------------- source rules

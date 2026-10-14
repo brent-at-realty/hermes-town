@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { ReferenceArt, REFERENCE_ATLASES } from '../art/reference';
 import { paintTerrain } from '../art/terrain';
+import { paintFogBank, paintRainSheet, paintRipple } from '../art/weather';
 import { paintStructures } from '../art/structures';
 import { PROP_ANCHORS, TREE_ANCHORS } from '../world/dressing';
 import {
@@ -94,6 +95,10 @@ export class TownScene extends Phaser.Scene {
   private dayLights: { x: number; y: number; scale: number; tint: number; alpha: number }[] = [];
   /** Everything the environment profile draws: rebuilt whenever the environment changes. */
   private decor: { destroy(): void }[] = [];
+  /** Weather layers rebuilt with the decor: scrolling fog banks, rain sheets and the camera-following ripple zone. */
+  private fogLayers: { sprite: Phaser.GameObjects.TileSprite; vx: number; vy: number }[] = [];
+  private rainLayers: { sprite: Phaser.GameObjects.TileSprite; vx: number; vy: number }[] = [];
+  private rippleZone: Phaser.Geom.Rectangle | null = null;
   private fountains: { x: number; y: number; foot: number }[] = [];
   private terrainImages: Phaser.GameObjects.Image[] = [];
   private buildingImages: Phaser.GameObjects.Image[] = [];
@@ -127,10 +132,16 @@ export class TownScene extends Phaser.Scene {
     const tex = this.textures;
     const add = (key: string, c: HTMLCanvasElement) => tex.addCanvas(key, c);
     const art = new ReferenceArt(Object.fromEntries(Object.keys(REFERENCE_ATLASES).map(key => [key, tex.get(`reference-${key}`).getSourceImage()])) as Record<keyof typeof REFERENCE_ATLASES, HTMLImageElement>);
-    add('terrain', paintTerrain(map));
+    add('terrain', paintTerrain(map, this.opts.appearance.map.terrain));
     add('glow', paintGlow()); add('spark', paintSpark());
     add('shadow-tree', paintShadow(26, 10)); add('shadow-char', paintShadow(12, 5));
     for (const e of ['ok', 'fail', 'think', 'zzz', 'wait'] as const) add(`emote-${e}`, paintEmote(e));
+    // Weather sheets are painted once. Fog is smooth, so it is sampled linearly even though the world is not.
+    for (const [key, seed, coverage] of [['fog-a', 31, 0.6], ['fog-b', 77, 0.5], ['fog-c', 113, 0.45]] as const) {
+      add(key, paintFogBank(seed, 512, coverage));
+      tex.get(key).setFilter(Phaser.Textures.FilterMode.LINEAR);
+    }
+    add('rain-near', paintRainSheet(5, 70, 26)); add('rain-far', paintRainSheet(9, 90, 15)); add('ripple', paintRipple());
 
     // Detailed sprites retain their authored feet; navigation is still in world pixels.
     // The table is data (`PROP_ART`), shared with the map validation.
@@ -358,6 +369,8 @@ export class TownScene extends Phaser.Scene {
     keep(this.add.rectangle(0, 0, this.mapW * TILE, this.mapH * TILE, g.multiplyColor, 1).setOrigin(0, 0).setBlendMode(Phaser.BlendModes.MULTIPLY).setDepth(197500).setAlpha(g.multiplyAlpha));
     keep(this.add.rectangle(0, 0, this.mapW * TILE, this.mapH * TILE, g.addColor, 1).setOrigin(0, 0).setBlendMode(Phaser.BlendModes.ADD).setDepth(197501).setAlpha(g.addAlpha));
 
+    this.buildWeather(keep);
+
     // edge haze: the far countryside softens toward the world's edge
     const hazeKey = `haze-${this.hazeSerial++}`;
     const hz = document.createElement('canvas');
@@ -394,12 +407,6 @@ export class TownScene extends Phaser.Scene {
     const v = this.opts.view;
     const zone = new Phaser.Geom.Rectangle((v.centerX - v.fitW / 2) * TILE, (v.centerY - v.fitH / 2) * TILE, v.fitW * TILE, v.fitH * TILE);
     const emitZone = { type: 'random', source: zone, quantity: 1 } as Phaser.Types.GameObjects.Particles.ParticleEmitterRandomZoneConfig;
-    if (env.rain) {
-      keep(this.add.particles(0, 0, 'spark', {
-        emitZone, speedY: { min: 150, max: 190 }, speedX: -30, lifespan: 450, frequency: 10,
-        scaleX: 0.35, scaleY: 2.4, alpha: { start: 0.35, end: 0.1 }, tint: 0xbfd0e6,
-      }).setDepth(198500));
-    }
     if (env.motes) {
       keep(this.add.particles(0, 0, 'spark', {
         emitZone, speedX: { min: -4, max: 4 }, speedY: { min: -7, max: -2 }, lifespan: 7000,
@@ -411,6 +418,62 @@ export class TownScene extends Phaser.Scene {
     // cloud shadows follow the profile's count; blobs are decorative texture, not weather the town reports
     while (this.cloudBlobs.length > env.cloudCount) this.cloudBlobs.pop();
     while (this.cloudBlobs.length < env.cloudCount) this.cloudBlobs.push({ x: Math.random() * this.mapW * TILE, y: Math.random() * this.mapH * TILE, r: 3.5 + Math.random() * 3, a: 0.16 + Math.random() * 0.12 });
+  }
+
+  /**
+   * Weather the viewer chose: a colour wash, layered fog banks drifting across
+   * the whole world, dense rain sheets, and ripples where the rain lands. All of
+   * it is decoration. Fog sits below the name tags, bubbles and emotes so the
+   * state a resident shows is never covered, and it has gaps by construction.
+   */
+  private buildWeather(keep: <O extends { destroy(): void }>(o: O) => O): void {
+    const env = this.app.environment;
+    this.fogLayers = []; this.rainLayers = []; this.rippleZone = null;
+    const W = this.mapW * TILE, H = this.mapH * TILE;
+    if (env.wash) {
+      keep(this.add.rectangle(0, 0, W, H, env.wash.color, 1).setOrigin(0, 0)
+        .setBlendMode(env.wash.blend === 'add' ? Phaser.BlendModes.ADD : Phaser.BlendModes.MULTIPLY).setDepth(197600).setAlpha(env.wash.alpha));
+    }
+    if (env.fogAlpha > 0) {
+      const [hr, hg, hb] = env.hazeColor;
+      const mixed = (c: number) => Math.round(c * 0.5 + 255 * 0.5);
+      const fogTint = (mixed(hr) << 16) | (mixed(hg) << 8) | mixed(hb);
+      // three banks at different scales and speeds, drifting in different directions, so they slide through one another
+      for (const [key, scale, share, vx, vy] of [['fog-a', 2.6, 0.95, 9, 2], ['fog-b', 1.9, 0.8, -14, 3], ['fog-c', 3.4, 0.65, 5, -1.5]] as const) {
+        const sprite = keep(this.add.tileSprite(0, 0, W, H, key).setOrigin(0, 0).setTileScale(scale, scale).setTint(fogTint)
+          .setAlpha(Math.min(1, env.fogAlpha * share)).setDepth(99000));
+        this.fogLayers.push({ sprite, vx: vx * env.fogDrift, vy: vy * env.fogDrift });
+      }
+    }
+    if (env.rainSheetAlpha > 0) {
+      for (const [key, share, speed] of [['rain-far', 0.7, 430], ['rain-near', 1, 650]] as const) {
+        const sprite = keep(this.add.tileSprite(0, 0, W, H, key).setOrigin(0, 0)
+          .setAlpha(Math.min(1, env.rainSheetAlpha * share)).setDepth(198500));
+        this.rainLayers.push({ sprite, vx: env.rainFalls ? speed * 0.22 : 0, vy: env.rainFalls ? -speed : 0 });
+      }
+    }
+    if (env.rippleRate > 0) {
+      const view = this.cameras.main.worldView;
+      this.rippleZone = new Phaser.Geom.Rectangle(view.x, view.y, view.width, view.height);
+      const emitZone = { type: 'random', source: this.rippleZone, quantity: 1 } as Phaser.Types.GameObjects.Particles.ParticleEmitterRandomZoneConfig;
+      keep(this.add.particles(0, 0, 'ripple', {
+        emitZone, lifespan: 420, frequency: 4 / env.rippleRate, quantity: 1,
+        scale: { start: 0.45, end: 1.15 }, alpha: { start: 0.75, end: 0 },
+      }).setDepth(-1.5));
+    }
+  }
+
+  private weatherClock = 0;
+
+  /** Drift the fog and let the rain fall. Positions are a pure function of the clock, so rebuilding the decor never jumps. */
+  private updateWeather(dt: number): void {
+    this.weatherClock += dt;
+    for (const l of this.fogLayers) l.sprite.setTilePosition(this.weatherClock * l.vx, this.weatherClock * l.vy);
+    for (const l of this.rainLayers) l.sprite.setTilePosition(this.weatherClock * l.vx, this.weatherClock * l.vy);
+    if (this.rippleZone) {
+      const v = this.cameras.main.worldView;
+      this.rippleZone.setTo(v.x, v.y, v.width, v.height);
+    }
   }
 
   private recenter(): void {
@@ -561,6 +624,7 @@ export class TownScene extends Phaser.Scene {
 
     this.updateStallLabels();
     this.updateWind(dt);
+    this.updateWeather(dt);
     this.frameParity ^= 1;
     if (this.frameParity) this.drawClouds(dt * 2); else this.drawNight();
   }

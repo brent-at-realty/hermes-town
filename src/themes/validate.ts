@@ -100,7 +100,7 @@ export function validateRegistry(): string[] {
     if (!ID.test(kit.id)) out.push(`people kit ${kit.id}: bad id`);
     if (!kit.preview.every(isColour)) out.push(`people kit ${kit.id}: preview swatches must be plain colours`);
     for (const list of [kit.hair, kit.cloth, kit.pants]) if (list && !list.every(isColour)) out.push(`people kit ${kit.id}: palettes must be plain colours`);
-    for (const c of [kit.trim, kit.hatColor, kit.plume]) if (c !== undefined && !/^#[0-9a-f]{6}$/i.test(c)) out.push(`people kit ${kit.id}: trim, hat and plume colours must be #rrggbb`);
+    for (const c of [kit.trim, kit.hatColor, kit.plume, kit.sash, kit.hemBand, kit.sleeve]) if (c !== undefined && !/^#[0-9a-f]{6}$/i.test(c)) out.push(`people kit ${kit.id}: trim, hat, plume, sash and hem colours must be #rrggbb`);
   }
   const tags = KITS.map((k) => k.textureTag);
   dupes('people kit texture tag', tags);

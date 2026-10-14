@@ -15,14 +15,24 @@ export interface WeatherProfile {
   haze: number;
   /** Added to the overall darkness, before the theme's cap. */
   dim: number;
-  /** Decorative rain streaks. Never shown under reduced motion. */
+  /** Decorative rain streaks. Never shown moving under reduced motion. */
   rain: boolean;
+  /**
+   * Peak opacity of the layered fog banks drawn across the visible world, 0..1.
+   * Zero for clear weather. The banks have gaps, so a resident in one is never
+   * fully covered.
+   */
+  fog: number;
+  /** Opacity of the rain streak sheets, 0..1. Zero when it is not raining. */
+  rainSheet: number;
+  /** A colour wash over the world that gives the weather its mood. `null` leaves the grade alone. */
+  wash: { color: number; alpha: number; blend: 'multiply' | 'add' } | null;
 }
 
 export const WEATHER_OPTIONS: readonly WeatherProfile[] = [
-  { id: 'clear', label: 'Clear', haze: 0, dim: 0, rain: false },
-  { id: 'mist', label: 'Mist', haze: 0.22, dim: 0.04, rain: false },
-  { id: 'rain', label: 'Rain', haze: 0.12, dim: 0.1, rain: true },
+  { id: 'clear', label: 'Clear', haze: 0, dim: 0, rain: false, fog: 0, rainSheet: 0, wash: null },
+  { id: 'mist', label: 'Mist', haze: 0.22, dim: 0.05, rain: false, fog: 0.5, rainSheet: 0, wash: { color: 0xdfe8ee, alpha: 0.1, blend: 'add' } },
+  { id: 'rain', label: 'Rain', haze: 0.14, dim: 0.14, rain: true, fog: 0.16, rainSheet: 0.62, wash: { color: 0x8fa6c4, alpha: 0.32, blend: 'multiply' } },
 ];
 
 export const MOTION_OPTIONS: readonly { id: MotionChoice; label: string }[] = [
@@ -67,6 +77,20 @@ export interface ResolvedEnvironment {
   idleSmoke: boolean;
   rain: boolean;
   motes: { count: number; color: number; alpha: number } | null;
+  /**
+   * Fog banks: peak opacity and drift (a multiplier of the renderer's slow drift
+   * speed). Under reduced motion the banks stop drifting but stay on screen, so
+   * mist is still readable.
+   */
+  fogAlpha: number;
+  fogDrift: number;
+  /** Rain sheets: opacity, and whether they fall. Under reduced motion they hold still at half strength. */
+  rainSheetAlpha: number;
+  rainFalls: boolean;
+  /** Rate multiplier of the ground ripples; zero when it is not raining or motion is reduced. */
+  rippleRate: number;
+  /** The colour wash over the world, or null. */
+  wash: WeatherProfile['wash'];
 }
 
 export function resolveEnvironment(profile: EnvironmentProfile, time: TimeId | 'theme', weather: WeatherId | 'theme', reducedMotion: boolean): ResolvedEnvironment {
@@ -96,5 +120,12 @@ export function resolveEnvironment(profile: EnvironmentProfile, time: TimeId | '
     // Rain is movement by definition: reduced motion keeps the dimming and haze but drops the streaks.
     rain: w.rain && !rm,
     motes: profile.motes && !rm ? profile.motes : null,
+    // Fog and rain keep a static, readable cue under reduced motion: only the movement is removed.
+    fogAlpha: w.fog * (rm ? 0.85 : 1),
+    fogDrift: rm ? 0 : 1,
+    rainSheetAlpha: w.rainSheet * (rm ? 0.5 : 1),
+    rainFalls: w.rain && !rm,
+    rippleRate: w.rain && !rm ? 1 : 0,
+    wash: w.wash,
   };
 }

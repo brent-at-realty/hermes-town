@@ -102,6 +102,12 @@ export interface Look {
   plume?: string;
   /** The diagonal satchel strap. Drawn unless this is exactly false. */
   satchel?: boolean;
+  /** A baldric worn from shoulder to hip, in a bold accent colour. Edged in the hat colour. */
+  sash?: string;
+  /** A two-pixel band along the hem of the coat. */
+  hemBand?: string;
+  /** Sleeve colour, when the arms are not the same cloth as the body (shirt sleeves under a coloured tunic). */
+  sleeve?: string;
 }
 
 /** A stable look from a stable id, nudged by role so jobs read at a glance. A profile colour, when given, replaces the role's cloth. */
@@ -313,7 +319,7 @@ function drawFrame(look: Look, facing: Facing, mode: Mode, phase: number): Paint
     const direction = start.x < 10 ? 1 : -1;
     const elbow = { x: Math.round((start.x + end.x) / 2 - direction * dy / distance * bend),
       y: Math.round((start.y + end.y) / 2 + direction * dx / distance * bend) };
-    const color = far ? look.cloth2 : look.cloth;
+    const color = look.sleeve ? (far ? shade(look.sleeve, 0.8) : look.sleeve) : far ? look.cloth2 : look.cloth;
     stroke(start, elbow, color);
     stroke(elbow, end, color);
     hand(end, far);
@@ -361,6 +367,20 @@ function drawFrame(look: Look, facing: Facing, mode: Mode, phase: number): Paint
     rect(tx, torsoTop + 6, tw, 1, STRAP);
     if (!back) rect(side ? 8 : 9, torsoTop + 6, side ? 1 : 2, 1, BUCKLE);
   }
+  if (look.sash) {
+    // A baldric from one shoulder to the opposite hip: a bold two-tone band that reads at overview scale.
+    const edge = look.hatColor ?? INK;
+    const span = side ? 4 : tw - 5, rows = 10;
+    for (let i = 0; i < rows; i++) {
+      const sx = (back ? tx + 1 + span - Math.round((i * span) / (rows - 1)) : tx + 1 + Math.round((i * span) / (rows - 1)));
+      rect(sx, torsoTop + i, 3, 1, look.sash);
+      px(back ? sx + 3 : sx - 1, torsoTop + i, edge);
+    }
+  }
+  if (look.hemBand && garment === 'coat') {
+    rect(tx - 1 + hemFollow, hem - 3 + oy, tw + 2, 2, look.hemBand);
+    rect(tx - 1 + hemFollow, hem - 1 + oy, tw + 2, 1, look.hatColor ?? INK);
+  }
   if (look.trim) {
     // Collar, lapels and hem in the kit's edging colour. The body colour is untouched.
     const trim = look.trim;
@@ -407,12 +427,14 @@ function drawFrame(look: Look, facing: Facing, mode: Mode, phase: number): Paint
   switch (look.hat) {
     case 'brim': {
       const hat = look.hatColor ?? HAT, hatDark = look.hatColor ? shade(hat, 0.7) : HAT_DARK, hatLight = shade(hat, 1.15);
-      rect(side ? 1 : 2, brimY, side ? 17 : 16, 2, hat);
-      rect(side ? 1 : 2, brimY + 1, side ? 17 : 16, 1, hatDark);
-      rect(5, headTop - 2, 10, 3, hat);
-      rect(5, headTop - 2, 10, 1, hatLight);
+      // A plumed hat is the festive one: a wider brim and a taller crown than the plain straw hat.
+      const wide = look.plume ? 2 : 0, tall = look.plume ? 1 : 0;
+      rect((side ? 1 : 2) - wide / 2, brimY, (side ? 17 : 16) + wide, 2, hat);
+      rect((side ? 1 : 2) - wide / 2, brimY + 1, (side ? 17 : 16) + wide, 1, hatDark);
+      rect(5, headTop - 2 - tall, 10, 3 + tall, hat);
+      rect(5, headTop - 2 - tall, 10, 1, hatLight);
       rect(5, headTop, 10, 1, look.trim ?? hatDark);
-      if (look.plume) { rect(12, headTop - 4, 2, 3, look.plume); px(13, headTop - 5, look.plume); px(11, headTop - 3, shade(look.plume, 0.7)); }
+      if (look.plume) { rect(12, headTop - 5, 2, 4, look.plume); px(13, headTop - 6, look.plume); px(11, headTop - 3, shade(look.plume, 0.7)); px(14, headTop - 4, shade(look.plume, 0.7)); }
       break;
     }
     case 'cap':

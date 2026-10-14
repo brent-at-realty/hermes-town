@@ -1,7 +1,7 @@
 import { profileColorFor } from './art/profileColors';
 import { createAppearanceController, stripAppearanceFromAddress } from './hud/appearance';
 import { createAppearancePanel } from './hud/appearancePanel';
-import { createMinimap, runMinimap } from './hud/minimap';
+import { createMinimap, minimapPalette, runMinimap } from './hud/minimap';
 import { applyUiPalette } from './hud/uiPalette';
 import { TILE } from './art/tiles';
 import { createTownRuntime, type TownMode, type TownRuntime } from './runtime';
@@ -221,7 +221,7 @@ const minimap = createMinimap(minimapCanvas, {
   sim: () => rt.sim,
   scene: () => rt.scene(),
   selectedId: () => selectedId,
-  palette: () => controller.resolved().ui.minimap,
+  palette: () => minimapPalette(controller.resolved().ui.minimap, rt.preset.minimap),
 });
 minimapCanvas.addEventListener('click', (e) => {
   const rect = minimapCanvas.getBoundingClientRect();
