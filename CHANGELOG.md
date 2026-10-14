@@ -2,6 +2,15 @@
 
 All notable changes to Hermes Town Brent (formerly published as Hermes Town) are documented here.
 
+## 0.5.4 - 2026-10-14
+
+Version rationale: patch release; presentation only. No wire protocol, plugin id, state layout, lifecycle or privacy change.
+
+### Fix: rain no longer draws over name tags, bubbles or emotes
+
+- v0.5.3 drew the rain sheets above the resident name tags, speech bubbles and emotes, so rain could cover the lifecycle state a resident shows. Rain now draws at depth 99500: still over the residents and buildings, so it reads as weather, but under building signs, name tags, bubbles and emotes (100000 and up), like fog (99000). Rain and ripple strength, fog, reduced-motion behaviour and the maps are unchanged.
+- `scripts/verify-legibility.mjs` now holds this ordering as a regression contract: it checks the display depths of the rain and fog layers against a real name tag, bubble and emote, then compares rendered pixels of those indicators with and without rain falling (they must match), and runs the same measurement with the rain lifted above them to prove the check fails when the ordering is wrong. It also proves ground ripples by rendered pixels at the normal view (ripple emitter on versus off), not only by emitter configuration.
+
 ## 0.5.3 - 2026-10-14
 
 Version rationale: patch release; presentation only. No wire protocol, plugin id, state layout, lifecycle or privacy change.

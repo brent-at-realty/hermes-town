@@ -110,6 +110,40 @@ const stats = async (png, { near = [], hues = [], box = null } = {}) => {
   }, [png.toString('base64'), near, box, hues]);
 };
 
+/**
+ * How much of an indicator survives a layer drawn near it. The mask is every pixel inside
+ * `boxes` that the indicator itself changes strongly (`withIt` vs `without`, both drawn with
+ * the layer off); `held` is the same scene with the layer on. Returns the mask size and the
+ * share of mask pixels in `held` that no longer match `withIt`: zero when the indicator is
+ * drawn on top of the layer, large when the layer paints over it.
+ */
+const overlay = async (withIt, without, held, boxes, { strong = 110, tolerance = 24 } = {}) => {
+  calc ??= await browser.newPage();
+  return calc.evaluate(async ([a, b, c, areas, strongDiff, tol]) => {
+    const load = (b64) => new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => { const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height; const g = cv.getContext('2d'); g.drawImage(img, 0, 0); resolve(g.getImageData(0, 0, img.width, img.height)); };
+      img.onerror = reject; img.src = `data:image/png;base64,${b64}`;
+    });
+    const [W, N, H] = [await load(a), await load(b), await load(c)];
+    let mask = 0, covered = 0;
+    const per = areas.map(([x0, y0, w, h]) => {
+      let m = 0, cv = 0;
+      for (let j = Math.max(0, y0); j < Math.min(W.height, y0 + h); j++) for (let i = Math.max(0, x0); i < Math.min(W.width, x0 + w); i++) {
+        const k = (j * W.width + i) * 4;
+        const dWN = Math.max(Math.abs(W.data[k] - N.data[k]), Math.abs(W.data[k + 1] - N.data[k + 1]), Math.abs(W.data[k + 2] - N.data[k + 2]));
+        if (dWN < strongDiff) continue;
+        m += 1;
+        const dWH = Math.max(Math.abs(W.data[k] - H.data[k]), Math.abs(W.data[k + 1] - H.data[k + 1]), Math.abs(W.data[k + 2] - H.data[k + 2]));
+        if (dWH > tol) cv += 1;
+      }
+      mask += m; covered += cv;
+      return [m, cv];
+    });
+    return { mask, covered, share: covered / Math.max(1, mask), per };
+  }, [withIt.toString('base64'), without.toString('base64'), held.toString('base64'), boxes, strong, tolerance]);
+};
+
 const mini = (page) => page.evaluate(() => document.querySelector('#minimap').toDataURL('image/png'));
 const frozen = (page) => page.evaluate(() => { const t = window.__town; t.source.stop(); t.sim.update = () => {}; t.sim.push = () => {}; });
 
@@ -286,7 +320,86 @@ try {
     assert.ok(ripples.zone && Math.abs(ripples.width - ripples.view) < 1, 'ripples fall across the visible camera area');
     const camera = await page.evaluate(() => { const s = window.__town.runtime.scene(); return { zoom: s.cameras.main.zoom, parts: s.sys.displayList.list.filter((o) => o.type === 'ParticleEmitter' && o.texture?.key === 'ripple').length }; });
     assert.ok(camera.parts >= 1, 'a ripple emitter is live while it rains');
-    // weather is decoration: the same residents, the same facts
+    // ---- hierarchy contract: weather is drawn under every lifecycle indicator
+    {
+      // every staged resident shows a name tag, a bubble and an emote, as a working resident would
+      // (at the overview only the selected resident keeps its name tag, so one is selected)
+      const indicators = (on) => page.evaluate((v) => {
+        const t = window.__town, s = t.runtime.scene();
+        [...t.sim.residents.values()].forEach((r, i) => { r.fade = 1; r.state = 'idle'; r.bubble = v ? ['read file', 'run shell', 'web search', 'on watch'][i % 4] : null; r.emote = v ? ['ok', 'think', 'wait', 'fail'][i % 4] : null; });
+        s.select(v ? [...t.sim.residents.keys()][3] : null);
+      }, on);
+      await indicators(true);
+      await settle(page, 6);
+      const hier = await page.evaluate(() => {
+        const s = window.__town.runtime.scene();
+        const views = [...s.views.values()];
+        const rain = s.rainLayers.map((l) => l.sprite.depth), fog = s.fogLayers.map((l) => l.sprite.depth);
+        const visible = (o) => o.visible;
+        return {
+          rain, fog,
+          sprites: Math.max(...views.map((v) => v.sprite.depth)),
+          name: Math.min(...views.map((v) => v.name.depth)),
+          bubbles: views.filter((v) => visible(v.bubble)).map((v) => [v.bubbleBg.depth, v.bubble.depth]).flat(),
+          emotes: views.filter((v) => visible(v.emote)).map((v) => v.emote.depth),
+          shown: { bubbles: views.filter((v) => visible(v.bubble)).length, emotes: views.filter((v) => visible(v.emote)).length, names: views.filter((v) => visible(v.name)).length },
+        };
+      });
+      assert.equal(hier.rain.length, 2, 'two rain sheets');
+      assert.ok(hier.shown.names >= 1 && hier.shown.bubbles >= 7 && hier.shown.emotes >= 7, `a name tag, and a bubble and emote for every staged resident, are on screen (${JSON.stringify(hier.shown)})`);
+      assert.ok(Math.min(...hier.rain) > hier.sprites, 'rain still falls over the residents and buildings');
+      assert.ok(Math.max(...hier.rain, ...hier.fog) < Math.min(hier.name, ...hier.bubbles, ...hier.emotes), `rain (${hier.rain}) and fog (${hier.fog}) are drawn under name tags (${hier.name}), bubbles (${Math.min(...hier.bubbles)}) and emotes (${Math.min(...hier.emotes)})`);
+
+      // rendered: the indicator pixels with rain falling match the same scene without rain
+      const areas = await page.evaluate(() => {
+        const s = window.__town.runtime.scene(), c = s.cameras.main, z = c.zoom;
+        const out = [];
+        for (const v of s.views.values()) for (const o of [v.name, v.bubbleBg, v.emote]) {
+          if (!o.visible) continue;
+          const b = o.getBounds();
+          out.push([Math.floor((b.x - c.worldView.x) * z) - 2, Math.floor((b.y - c.worldView.y) * z) - 2, Math.ceil(b.width * z) + 4, Math.ceil(b.height * z) + 4]);
+        }
+        return out;
+      });
+      const weatherOn = (on) => page.evaluate((v) => { const s = window.__town.runtime.scene(); s.rainLayers.forEach((l) => l.sprite.setVisible(v)); s.sys.displayList.list.filter((o) => o.type === 'ParticleEmitter' && o.texture?.key === 'ripple').forEach((o) => o.setVisible(v)); }, on);
+      const withRain = await shot(page);
+      await weatherOn(false); await settle(page, 4);
+      const clearWith = await shot(page);
+      // the indicators' own pixels: shown vs hidden, both with the rain off
+      await indicators(false); await settle(page, 4);
+      const clearWithout = await shot(page);
+      await indicators(true); await weatherOn(true);
+      await settle(page, 4);
+      const held = await overlay(clearWith, clearWithout, withRain, areas, { tolerance: 10 });
+      assert.ok(held.mask >= 800, `the indicator mask is substantial (${held.mask} strongly drawn pixels across ${areas.length} name tags, bubbles and emotes)`);
+      assert.ok(held.share <= 0.01, `rain does not paint over name tags, bubbles or emotes: ${(held.share * 100).toFixed(2)}% of their pixels differ with rain falling`);
+      // the check has teeth: lift the rain above the indicators (the earlier v0.5.3 ordering) and it fails
+      await page.evaluate(() => window.__town.runtime.scene().rainLayers.forEach((l) => l.sprite.setDepth(198500))); await settle(page, 4);
+      const inverted = await overlay(clearWith, clearWithout, await shot(page), areas, { tolerance: 10 });
+      await page.evaluate((d) => window.__town.runtime.scene().rainLayers.forEach((l) => l.sprite.setDepth(d)), hier.rain[0]); await settle(page, 4);
+      assert.ok(inverted.share >= 0.015 && inverted.share > held.share + 0.012, `with the rain drawn over the indicators the same measurement fails (${(inverted.share * 100).toFixed(1)}% covered vs ${(held.share * 100).toFixed(2)}%)`);
+      await fs.writeFile(path.join(output, 'rain-over-indicators-ok.png'), withRain);
+      receipts.rainHierarchy = { depths: { rain: hier.rain, fog: hier.fog, nameTag: hier.name, bubble: Math.min(...hier.bubbles), emote: Math.min(...hier.emotes) }, indicatorPixels: held.mask, coveredByRain: +held.share.toFixed(4), coveredIfRainWereAbove: +inverted.share.toFixed(3) };
+    }
+
+    // ---- ripples: visible ring pixels at the normal view, not only an emitter
+    {
+      const toggle = (v) => page.evaluate((on) => { const s = window.__town.runtime.scene(); s.rainLayers.forEach((l) => l.sprite.setVisible(false)); s.sys.displayList.list.filter((o) => o.type === 'ParticleEmitter' && o.texture?.key === 'ripple').forEach((o) => o.setVisible(on)); }, v);
+      const ring = async (page2, off, on, off2) => (await Promise.all([measure(off, on, { tolerance: 40 }), measure(off, off2, { tolerance: 40 })]));
+      await toggle(false); await settle(page, 4);
+      const off1 = await shot(page); await settle(page, 3); const off2 = await shot(page);
+      await toggle(true); await page.waitForTimeout(500); await settle(page, 2);
+      const on1 = await shot(page);
+      const [vsOn, vsOff] = await ring(page, off1, on1, off2);
+      const rippleChanged = vsOn.changed - vsOff.changed;
+      await fs.writeFile(path.join(output, 'ripples-only.png'), on1);
+      assert.ok(rippleChanged >= 2500, `ground ripples paint visible rings at the normal view (${vsOn.changed} pixels differ with the emitter on, ${vsOff.changed} between two frames with it off)`);
+      const live = await page.evaluate(() => { const s = window.__town.runtime.scene(); const e = s.sys.displayList.list.find((o) => o.type === 'ParticleEmitter' && o.texture?.key === 'ripple'); return e ? e.getAliveParticleCount() : 0; });
+      assert.ok(live >= 20, `${live} ripples are alive at once across the screen`);
+      await page.evaluate(() => { const s = window.__town.runtime.scene(); s.rainLayers.forEach((l) => l.sprite.setVisible(true)); });
+      receipts.ripples = { pixelsChangedByRipples: vsOn.changed, pixelsChangedWithoutThem: vsOff.changed, aliveRipples: live };
+    }
+
     assert.deepEqual((await facts(page)).map((f) => f.id), stageBoxes.map((b) => b.id).sort());
     receipts.weather = {
       mistFromClear: +mistLayer.toFixed(3), mistReducedFromClear: +mistStatic.toFixed(3), mistDriftPerSecond: +mistDrift.toFixed(3), mistReducedDrift: +mistStill.toFixed(4), clearNoise: +clearNoise.toFixed(4),

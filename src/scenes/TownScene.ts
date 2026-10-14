@@ -21,6 +21,14 @@ import type { MapView } from '../themes/types';
 
 const ZOOMS = [1, 1.5, 2, 3, 4, 5];
 
+/**
+ * Weather draws over the world but under every lifecycle indicator: building
+ * signs (100000/100001), resident name tags (150000), bubbles (160000/160001)
+ * and emotes (160002). verify-legibility holds this ordering as a contract.
+ */
+export const FOG_DEPTH = 99000;
+export const RAIN_DEPTH = 99500;
+
 /** Channel-wise product of two 0xRRGGBB tints. */
 function multiplyTint(a: number, b: number): number {
   const ch = (shift: number) => Math.round((((a >> shift) & 255) * ((b >> shift) & 255)) / 255);
@@ -423,8 +431,10 @@ export class TownScene extends Phaser.Scene {
   /**
    * Weather the viewer chose: a colour wash, layered fog banks drifting across
    * the whole world, dense rain sheets, and ripples where the rain lands. All of
-   * it is decoration. Fog sits below the name tags, bubbles and emotes so the
-   * state a resident shows is never covered, and it has gaps by construction.
+   * it is decoration. Fog and rain both sit below the name tags, bubbles and
+   * emotes (depth 150000 and up), so the state a resident shows is never covered
+   * by weather; rain still draws over the residents and buildings themselves,
+   * which is what makes it read as weather. Fog has gaps by construction.
    */
   private buildWeather(keep: <O extends { destroy(): void }>(o: O) => O): void {
     const env = this.app.environment;
@@ -441,14 +451,14 @@ export class TownScene extends Phaser.Scene {
       // three banks at different scales and speeds, drifting in different directions, so they slide through one another
       for (const [key, scale, share, vx, vy] of [['fog-a', 2.6, 0.95, 9, 2], ['fog-b', 1.9, 0.8, -14, 3], ['fog-c', 3.4, 0.65, 5, -1.5]] as const) {
         const sprite = keep(this.add.tileSprite(0, 0, W, H, key).setOrigin(0, 0).setTileScale(scale, scale).setTint(fogTint)
-          .setAlpha(Math.min(1, env.fogAlpha * share)).setDepth(99000));
+          .setAlpha(Math.min(1, env.fogAlpha * share)).setDepth(FOG_DEPTH));
         this.fogLayers.push({ sprite, vx: vx * env.fogDrift, vy: vy * env.fogDrift });
       }
     }
     if (env.rainSheetAlpha > 0) {
       for (const [key, share, speed] of [['rain-far', 0.7, 430], ['rain-near', 1, 650]] as const) {
         const sprite = keep(this.add.tileSprite(0, 0, W, H, key).setOrigin(0, 0)
-          .setAlpha(Math.min(1, env.rainSheetAlpha * share)).setDepth(198500));
+          .setAlpha(Math.min(1, env.rainSheetAlpha * share)).setDepth(RAIN_DEPTH));
         this.rainLayers.push({ sprite, vx: env.rainFalls ? speed * 0.22 : 0, vy: env.rainFalls ? -speed : 0 });
       }
     }

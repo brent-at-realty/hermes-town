@@ -2,7 +2,7 @@
 
 Plugin id `hermes-town-brent`. A passive lifecycle observer for [Hermes Town Brent](https://github.com/brent-at-realty/hermes-town). It renders one pseudonymous resident per Hermes execution context without reading what the agent is working on.
 
-This v0.5.3 package includes the passive bridge, a profile-local launcher, the Node server, and a prebuilt frontend. No npm or repository checkout is needed at runtime. Requires Hermes Agent (validated baseline 0.21.2) and Node.js `^20.19.0` or `>=22.12.0`.
+This v0.5.4 package includes the passive bridge, a profile-local launcher, the Node server, and a prebuilt frontend. No npm or repository checkout is needed at runtime. Requires Hermes Agent (validated baseline 0.21.2) and Node.js `^20.19.0` or `>=22.12.0`.
 
 Once a catalog entry for `hermes-town-brent` is merged (until then, use the developer install in the repository README or a Git install of the exact commit):
 
