@@ -14,6 +14,23 @@ export interface MinimapSource {
   palette(): UiPalette['minimap'];
 }
 
+/**
+ * Keep the minimap drawn from the mounted map without depending on animation
+ * frames alone. Browsers pause requestAnimationFrame for a background or
+ * occluded tab while the Town renderer (which uses timers) keeps running, so a
+ * map Apply or Reset made then would leave the previous map on the minimap. A
+ * timer redraws when no frame has, and an error in one draw cannot end the loop.
+ */
+export function runMinimap(render: () => void, win: Pick<Window, 'requestAnimationFrame' | 'setInterval' | 'clearInterval'> = window): () => void {
+  let last = Number.NEGATIVE_INFINITY;
+  const draw = (): void => { last = performance.now(); render(); };
+  const frame = (): void => { try { draw(); } finally { win.requestAnimationFrame(frame); } };
+  win.requestAnimationFrame(frame);
+  const timer = win.setInterval(() => { if (performance.now() - last > 200) draw(); }, 250);
+  draw();
+  return () => win.clearInterval(timer);
+}
+
 export function createMinimap(canvas: HTMLCanvasElement, src: MinimapSource): { render(): void; invalidate(): void } {
   const ctx = canvas.getContext('2d')!;
   ctx.imageSmoothingEnabled = false;

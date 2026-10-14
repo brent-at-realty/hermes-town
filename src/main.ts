@@ -1,7 +1,7 @@
 import { profileColorFor } from './art/profileColors';
 import { createAppearanceController, stripAppearanceFromAddress } from './hud/appearance';
 import { createAppearancePanel } from './hud/appearancePanel';
-import { createMinimap } from './hud/minimap';
+import { createMinimap, runMinimap } from './hud/minimap';
 import { applyUiPalette } from './hud/uiPalette';
 import { TILE } from './art/tiles';
 import { createTownRuntime, type TownMode, type TownRuntime } from './runtime';
@@ -64,6 +64,8 @@ function reloadMap(): void {
   selectedId = null;
   rt.destroy();
   rt = mount(controller.resolved());
+  minimap.invalidate();
+  minimap.render();
   syncButtons();
   renderPanel();
   appearancePanel.render();
@@ -229,8 +231,7 @@ minimapCanvas.addEventListener('click', (e) => {
 });
 
 window.setInterval(() => { renderStatus(); renderPanel(); }, 500);
-const loop = (): void => { minimap.render(); requestAnimationFrame(loop); };
-requestAnimationFrame(loop);
+runMinimap(() => minimap.render());
 
 void PLACE_LABEL;
 export type { Place };
