@@ -2,7 +2,9 @@
 
 All notable changes to Hermes Town Brent (formerly published as Hermes Town) are documented here.
 
-## Unreleased
+## 0.5.2 - 2026-10-14
+
+Version rationale: patch release; minimap redraw fix only. No wire protocol, plugin id, state layout or lifecycle-privacy change.
 
 ### Fix: the minimap redraws from the mounted map after Apply and Reset
 
