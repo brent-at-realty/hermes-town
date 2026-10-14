@@ -1038,7 +1038,19 @@ def register(ctx) -> None:
     """Register passive observers and the explicit, opt-in native Town CLI.
 
     Registration does not create state, read credentials, or open a socket.
+
+    If the legacy ``hermes-town`` plugin is enabled in this Hermes home, this
+    plugin stays completely inert (no hooks, no CLI command): both would own the
+    same ``hermes town`` command and deliver every lifecycle event twice, and the
+    legacy plugin must keep running its own bytes. Nothing is modified.
     """
+    try:
+        from .legacy_guard import legacy_enabled, conflict_message
+        if legacy_enabled():
+            logger.warning("hermes-town-brent: %s", conflict_message())
+            return
+    except Exception:  # the guard is advisory; it must never break plugin loading
+        logger.debug("hermes-town-brent: legacy plugin check failed", exc_info=True)
     for name, callback in HOOKS:
         ctx.register_hook(name, callback)
     register_cli = getattr(ctx, "register_cli_command", None)

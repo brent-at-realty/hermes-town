@@ -1,10 +1,10 @@
-# Hermes Town
+# Hermes Town Brent
 
-A local pixel-art interface for Hermes Agent. Every resident represents a real Hermes execution context. Tool calls send residents to the library, workshop, forge, post office, observatory, or town hall. Completed sessions rest at the tavern and eventually walk home.
+A local pixel-art interface for Hermes Agent. Plugin id `hermes-town-brent`; the command stays `hermes town`. Every resident represents a real Hermes execution context. Tool calls send residents to the library, workshop, forge, post office, observatory, or town hall. Completed sessions rest at the tavern and eventually walk home.
 
-![Hermes Town](artifacts/world-remodel.png)
+![Hermes Town Brent](artifacts/world-remodel.png)
 
-> v0.4.0 packages the bridge, local server, and prebuilt town together, serves one shared Town for every local Hermes profile, and adds the Appearance drawer. Runtime use needs Hermes and Node.js, not a repository checkout, npm, or a frontend build. Catalog availability follows a separately reviewed pin update.
+> v0.5.0 is the first release under the independent **Hermes Town Brent** identity (plugin id `hermes-town-brent`). It packages the bridge, local server, and prebuilt town together, serves one shared Town for every local Hermes profile, and has the Appearance drawer. Runtime use needs Hermes and Node.js, not a repository checkout, npm, or a frontend build. It is installed from this repository; it is not the `hermes-town` plugin-catalog entry and is not listed in the Hermes plugin catalog unless a separate catalog entry says so. See [Switching from the legacy `hermes-town` plugin](#switching-from-the-legacy-hermes-town-plugin).
 
 ## Requirements
 
@@ -14,12 +14,12 @@ A local pixel-art interface for Hermes Agent. Every resident represents a real H
 
 ## Try the demo
 
-A scripted demo runs at [sxuff.github.io/hermes-town](https://sxuff.github.io/hermes-town/). Every session on that page is simulated in the browser; nothing there connects to a Hermes runtime.
+The built-in scripted demo simulates every session in the browser; nothing in it connects to a Hermes runtime.
 
-To run the same demo locally:
+To run the demo locally:
 
 ```bash
-git clone https://github.com/sxuff/hermes-town.git
+git clone https://github.com/brent-at-realty/hermes-town.git
 cd hermes-town
 npm ci
 npm run dev
@@ -29,13 +29,13 @@ Open `http://127.0.0.1:5173/?agents=demo&hour=17`.
 
 ## Connect a local Hermes runtime
 
-### Packaged plugin (v0.3.0 and later)
+### Packaged plugin
 
-Once the catalog entry points to a release containing this runtime:
+Install the plugin id `hermes-town-brent`. Once a catalog entry for it is merged:
 
 ```bash
-hermes plugins install hermes-town
-hermes plugins enable hermes-town
+hermes plugins install hermes-town-brent
+hermes plugins enable hermes-town-brent
 hermes town start
 ```
 
@@ -53,7 +53,16 @@ hermes town setup           # optional prerequisite/token check without starting
 
 `start` creates a private token if needed and launches the bundled server on loopback. Repeating it reuses the same healthy managed process. `stop` authenticates that exact process with a separate private management secret, never a PID from a stale file. It does not disable the Hermes plugin. The server is not a login service: after reboot, run `hermes town start` again.
 
-**Already installed v0.2.0?** It contains the bridge only. These commands will not appear until a new release is published, its catalog pin is reviewed, and you run `hermes plugins update hermes-town`. The plugin never downloads replacements for its reviewed code.
+Until then, or without the catalog, a Git install of the exact reviewed commit is supported by Hermes (`hermes plugins install brent-at-realty/hermes-town --ref <40-hex commit>`; see `hermes plugins install --help`), and the developer fallback below copies the same bytes. The plugin never downloads replacements for its reviewed code.
+
+### Switching from the legacy `hermes-town` plugin
+
+`hermes-town-brent` is a different plugin from the earlier `hermes-town` catalog entry. Both own the `hermes town` command and the same lifecycle hooks, so they must not be enabled together. Nothing here overwrites, migrates, or deletes the legacy plugin or its state:
+
+- The developer installer (`npm run install:plugin`) refuses while `hermes-town` is enabled in the target Hermes home, before it writes anything, and prints the steps. If the legacy plugin is only installed (not enabled) it installs beside it and says so.
+- If both end up enabled anyway, `hermes-town-brent` logs a warning and stays inert (no hooks, no command) so the legacy plugin keeps running its own bytes.
+- To switch: `hermes town stop` (while the legacy plugin is still enabled), then `hermes plugins disable hermes-town` (or `hermes plugins remove hermes-town`), then `hermes plugins enable hermes-town-brent`, then start a new Hermes session and `hermes town start`.
+- Runtime state and protocol names are unchanged: `$HERMES_HOME/hermes-town/runtime/` (and `hermes-town-shared/`), the `hermes-town.*.v1` wire versions, the `HERMES_TOWN_*` environment variables and the `hermes-town.appearance` browser key. An existing token and journal are therefore reused by the new plugin; remove them yourself if you want a clean start.
 
 ### Profiles and remote hosts
 
@@ -79,8 +88,8 @@ hermes town setup --shared
 
 # 2. Install and enable the plugin in each profile you want observed
 #    (plugins are per profile; repeat with -p NAME for every one).
-hermes -p work plugins install hermes-town
-hermes -p work plugins enable hermes-town
+hermes -p work plugins install hermes-town-brent
+hermes -p work plugins enable hermes-town-brent
 
 # 3. Start the one shared server (loopback, default port 4187).
 hermes town start --shared
@@ -114,7 +123,7 @@ npm ci
 npm run package:plugin
 npm run install:plugin
 hermes plugins doctor integrations/hermes-town-plugin --ci
-hermes plugins enable hermes-town
+hermes plugins enable hermes-town-brent
 hermes town start
 ```
 
@@ -270,4 +279,8 @@ For character review, run `npm run build && node scripts/capture-characters.mjs`
 
 ## License
 
-Hermes Town, including the code and shipped original assets, is licensed under the [MIT License](LICENSE).
+Hermes Town Brent, including the code and shipped original assets, is licensed under the [MIT License](LICENSE).
+
+## Origin
+
+Hermes Town Brent began as a fork of the MIT-licensed *Hermes Town* project by sxuff and contributors, whose copyright notice is retained in [LICENSE](LICENSE). It is maintained independently in this repository and is not affiliated with or endorsed by the original project or its plugin-catalog entry.

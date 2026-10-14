@@ -1,4 +1,4 @@
-# Hermes Town
+# Hermes Town Brent
 
 ## Product thesis
 
@@ -54,7 +54,7 @@ Simulated social chatter, public live hosting, an economy, multiplayer, combat, 
 
 ## Next milestones
 
-1. Publish the packaged v0.4.0 release and submit its catalog pin for review. The bundled runtime and explicit `hermes town setup/start/status/stop/open` path are implemented; publication is separate.
+1. Publish the packaged v0.5.0 release and, where the catalog admission rules allow, submit a distinct `hermes-town-brent` catalog entry. The bundled runtime and explicit `hermes town setup/start/status/stop/open` path are implemented; publication is separate.
 2. Optional Hermes Desktop page or launcher after the local server lifecycle is packaged.
 3. Waiting-for-user state with an explicit, privacy-safe lifecycle signal.
 4. Day history and stable session-to-home continuity across restarts.

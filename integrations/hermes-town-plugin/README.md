@@ -1,18 +1,20 @@
-# Hermes Town native plugin
+# Hermes Town Brent native plugin
 
-A passive lifecycle observer for [Hermes Town](https://github.com/sxuff/hermes-town). It renders one pseudonymous resident per Hermes execution context without reading what the agent is working on.
+Plugin id `hermes-town-brent`. A passive lifecycle observer for [Hermes Town Brent](https://github.com/brent-at-realty/hermes-town). It renders one pseudonymous resident per Hermes execution context without reading what the agent is working on.
 
-This v0.4.0 package includes the passive bridge, a profile-local launcher, the Node server, and a prebuilt frontend. No npm or repository checkout is needed at runtime. Requires Hermes Agent (validated baseline 0.21.2) and Node.js `^20.19.0` or `>=22.12.0`.
+This v0.5.0 package includes the passive bridge, a profile-local launcher, the Node server, and a prebuilt frontend. No npm or repository checkout is needed at runtime. Requires Hermes Agent (validated baseline 0.21.2) and Node.js `^20.19.0` or `>=22.12.0`.
 
-After this version is released and the catalog pin is reviewed:
+Once a catalog entry for `hermes-town-brent` is merged (until then, use the developer install in the repository README or a Git install of the exact commit):
 
 ```bash
-hermes plugins install hermes-town
-hermes plugins enable hermes-town
+hermes plugins install hermes-town-brent
+hermes plugins enable hermes-town-brent
 hermes town start
 ```
 
-Open the printed `http://127.0.0.1:4187/` URL on the Hermes host. Start a **new Hermes CLI session**, or restart the observed gateway, then run a turn. Town never enables itself or restarts Hermes. The existing v0.2.0 catalog pin does not contain these commands; it needs a reviewed pin update, then `hermes plugins update hermes-town`.
+Open the printed `http://127.0.0.1:4187/` URL on the Hermes host. Start a **new Hermes CLI session**, or restart the observed gateway, then run a turn. Town never enables itself or restarts Hermes.
+
+**Legacy `hermes-town` plugin?** Do not enable both. If the legacy plugin is enabled in the same Hermes home, this plugin logs a warning and registers nothing; it never overwrites, migrates, or deletes the legacy plugin or its state (`hermes-town/runtime/` is shared). Switch with `hermes town stop`, `hermes plugins disable hermes-town`, `hermes plugins enable hermes-town-brent`, then a new Hermes session.
 
 ## Manage your town
 

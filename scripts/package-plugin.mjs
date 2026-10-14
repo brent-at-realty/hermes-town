@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const PLUGIN_FILES = ['README.md', '__init__.py', 'plugin.yaml', 'town_cli.py'];
+export const PLUGIN_FILES = ['README.md', '__init__.py', 'legacy_guard.py', 'plugin.yaml', 'town_cli.py'];
 export const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
 const encode = (value) => `${JSON.stringify(value, null, 2)}\n`;
 const sorted = (entries) => Object.fromEntries(entries.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));

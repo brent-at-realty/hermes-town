@@ -214,7 +214,7 @@ The label is configuration, not Hermes runtime data: it is never derived from a 
 
 ## Packaged launcher (v0.3.0)
 
-The catalog package now contains `runtime/server/`, `runtime/dist/`, licenses, and a deterministic SHA-256 manifest. Once that release is catalog-pinned, install and enable it normally, then run `hermes town start`. No npm or build is needed by end users. See [README](README.md#connect-a-local-hermes-runtime) for setup and diagnostics. Release publication and the reviewed catalog pin update are separate steps.
+The plugin package (`hermes-town-brent`) contains `runtime/server/`, `runtime/dist/`, licenses, and a deterministic SHA-256 manifest. Once installed and enabled (catalog, exact-commit Git install, or the developer installer), then run `hermes town start`. No npm or build is needed by end users. See [README](README.md#connect-a-local-hermes-runtime) for setup and diagnostics. Release publication and any catalog entry are separate steps. The legacy `hermes-town` plugin must be disabled first: see the [switching guide](README.md#switching-from-the-legacy-hermes-town-plugin).
 
 `hermes town setup` validates prerequisites and creates a private profile-local token; `start` also performs setup, authenticates existing process ownership, and starts a background loopback server only when necessary. `status` separates local setup, server reachability/ownership, and first events. `stop` uses a per-process management secret, never a stale PID. `open` is opt-in browser launching. These commands neither edit Hermes configuration nor restart/enable Hermes.
 
@@ -243,8 +243,8 @@ This copies the plugin files and creates a 32-byte random bridge token with mode
 ### 2. Validate and enable
 
 ```bash
-hermes plugins doctor ~/.hermes/plugins/hermes-town --ci
-hermes plugins enable hermes-town
+hermes plugins doctor ~/.hermes/plugins/hermes-town-brent --ci
+hermes plugins enable hermes-town-brent
 hermes plugins list --plain --no-bundled
 ```
 
@@ -284,8 +284,8 @@ Drive a real tool call or delegated run and watch the corresponding resident act
 ### Disable and remove
 
 ```bash
-hermes plugins disable hermes-town
-rm -rf ~/.hermes/plugins/hermes-town
+hermes plugins disable hermes-town-brent
+rm -rf ~/.hermes/plugins/hermes-town-brent
 rm -f ~/.hermes/hermes-town/runtime/bridge-token
 ```
 

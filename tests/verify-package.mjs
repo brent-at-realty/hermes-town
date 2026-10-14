@@ -40,9 +40,9 @@ try {
     assert(!fs.existsSync(path.join(isolated, 'package.json')));
     assert(!fs.existsSync(path.join(isolated, 'server')));
     const result = run(h, [], true, isolated);
-    for (const command of ['hermes plugins enable hermes-town', 'hermes town start', 'hermes town status']) assert(result.stdout.includes(command));
-    for (const name of PLUGIN_FILES) assert(fs.readFileSync(path.join(h, 'plugins/hermes-town', name)).equals(fs.readFileSync(path.join(source, name))));
-    assert.deepEqual(verifyRuntime(path.join(h, 'plugins/hermes-town/runtime')), verifyRuntime(runtime));
+    for (const command of ['hermes plugins enable hermes-town-brent', 'hermes town start', 'hermes town status']) assert(result.stdout.includes(command));
+    for (const name of PLUGIN_FILES) assert(fs.readFileSync(path.join(h, 'plugins/hermes-town-brent', name)).equals(fs.readFileSync(path.join(source, name))));
+    assert.deepEqual(verifyRuntime(path.join(h, 'plugins/hermes-town-brent/runtime')), verifyRuntime(runtime));
     assert.equal(fs.readFileSync(path.join(h, 'config.yaml'), 'utf8'), config);
     assert.equal(fs.statSync(tokenPath(h)).mode & 0o777, 0o600);
     assert.equal(fs.statSync(path.dirname(tokenPath(h))).mode & 0o777, 0o700);
@@ -56,16 +56,46 @@ try {
     assert.deepEqual(inventory(path.join(h, 'plugins')), before);
     assert.equal(fs.readFileSync(path.join(h, 'config.yaml'), 'utf8'), config);
   });
+  test('enabled legacy hermes-town plugin blocks install before any write and is never touched', () => {
+    for (const [label, text] of [['block', 'plugins:\n  enabled:\n    - other\n    - hermes-town\n'], ['inline', "plugins:\n  enabled: [other, 'hermes-town']\n"]]) {
+      const dir = home(`legacy-enabled-${label}`); const legacy = path.join(dir, 'plugins/hermes-town');
+      fs.mkdirSync(legacy, { recursive: true }); fs.writeFileSync(path.join(legacy, 'plugin.yaml'), 'name: hermes-town\nversion: 0.3.0\n');
+      fs.writeFileSync(path.join(dir, 'config.yaml'), text);
+      const before = inventory(path.join(dir, 'plugins'));
+      const result = run(dir, [], false, isolated);
+      assert(result.stderr.includes("Legacy plugin 'hermes-town' is enabled"), result.stderr);
+      for (const hint of ['hermes town stop', 'hermes plugins disable hermes-town', 'nothing is migrated or deleted']) assert(result.stderr.includes(hint), hint);
+      assert(!fs.existsSync(path.join(dir, 'plugins/hermes-town-brent')) && !fs.existsSync(tokenPath(dir)));
+      assert.deepEqual(inventory(path.join(dir, 'plugins')), before);
+      assert.equal(fs.readFileSync(path.join(dir, 'config.yaml'), 'utf8'), text);
+    }
+  });
+  test('installed but disabled legacy plugin is reported and left byte-for-byte untouched', () => {
+    const dir = home('legacy-disabled'); const legacy = path.join(dir, 'plugins/hermes-town');
+    fs.mkdirSync(legacy, { recursive: true }); fs.writeFileSync(path.join(legacy, 'plugin.yaml'), 'name: hermes-town\nversion: 0.3.0\n');
+    fs.writeFileSync(path.join(dir, 'config.yaml'), 'plugins:\n  enabled: []\n  disabled:\n    - hermes-town\n');
+    const before = inventory(legacy);
+    const result = run(dir, [], true, isolated);
+    assert(result.stdout.includes("legacy plugin 'hermes-town' is still installed")); assert(result.stdout.includes('hermes plugins enable hermes-town-brent'));
+    assert.deepEqual(inventory(legacy), before); assert(fs.existsSync(path.join(dir, 'plugins/hermes-town-brent/plugin.yaml')));
+    assert(fs.readFileSync(path.join(dir, 'plugins/hermes-town-brent/plugin.yaml'), 'utf8').startsWith('name: hermes-town-brent\n'));
+  });
+  test('legacy install metadata is not mistaken for a hermes-town-brent install and never overwritten', () => {
+    const dir = home('legacy-metadata'); const legacy = path.join(dir, 'plugins/hermes-town'); copy(source, legacy);
+    fs.writeFileSync(path.join(dir, 'plugins/.install-metadata.json'), JSON.stringify({ 'hermes-town': { source: 'catalog', revision: 'a'.repeat(40) } }));
+    const before = inventory(legacy); run(dir, [], true, isolated);
+    assert.deepEqual(inventory(legacy), before); assert(fs.existsSync(path.join(dir, 'plugins/hermes-town-brent/runtime/manifest.json')));
+  });
   for (const marker of ['catalog', 'metadata']) test(`${marker}-managed payload remains byte-for-byte untouched`, () => {
-    const dir = home(marker); const target = path.join(dir, 'plugins/hermes-town'); copy(source, target);
+    const dir = home(marker); const target = path.join(dir, 'plugins/hermes-town-brent'); copy(source, target);
     fs.appendFileSync(path.join(target, 'README.md'), '\nReviewed catalog README, not developer checkout.\n');
     if (marker === 'catalog') fs.writeFileSync(path.join(target, '.hermes-catalog.json'), '{"reviewed":true}\n');
-    else fs.writeFileSync(path.join(dir, 'plugins/.install-metadata.json'), JSON.stringify({ 'hermes-town': { source: 'catalog', revision: 'a'.repeat(40) } }));
+    else fs.writeFileSync(path.join(dir, 'plugins/.install-metadata.json'), JSON.stringify({ 'hermes-town-brent': { source: 'catalog', revision: 'a'.repeat(40) } }));
     const before = inventory(path.join(dir, 'plugins')); run(dir);
     assert.deepEqual(inventory(path.join(dir, 'plugins')), before);
   });
   test('invalid catalog bundle rejected before token creation without repairs', () => {
-    const dir = home('invalid-catalog'); const target = path.join(dir, 'plugins/hermes-town'); copy(source, target);
+    const dir = home('invalid-catalog'); const target = path.join(dir, 'plugins/hermes-town-brent'); copy(source, target);
     fs.writeFileSync(path.join(target, '.hermes-catalog.json'), '{}');
     fs.appendFileSync(path.join(target, 'runtime/dist/index.html'), 'tampered');
     const before = inventory(path.join(dir, 'plugins')); run(dir, [], false);
@@ -107,7 +137,7 @@ try {
   });
   // Execute the installed Node-only server against the installed static files,
   // from a directory that has no repository or dependency tree.
-  const installed = path.join(h, 'plugins/hermes-town/runtime');
+  const installed = path.join(h, 'plugins/hermes-town-brent/runtime');
   const { createTownServer } = await import(pathToFileURL(path.join(installed, 'server/townServer.mjs')));
   const town = createTownServer({ token: fs.readFileSync(tokenPath(h), 'utf8').trim(), journalPath: path.join(h, 'hermes-town/runtime/test-journal.jsonl'), staticRoot: path.join(installed, 'dist') });
   try {

@@ -1,15 +1,15 @@
-name: hermes-town
-version: 0.4.0
+name: hermes-town-brent
+version: 0.5.0
 manifest_version: 2
 api_version: 1
 requires_hermes: ">=0.21"
 description: >-
-  Passive Hermes Town bridge. Publishes bounded, pseudonymous agent lifecycle
-  metadata to a same-host Town live server. Registers no tools, injects no
-  context, and returns no control directive.
-author: Hermes Town
+  Hermes Town Brent: passive Hermes Town bridge. Publishes bounded, pseudonymous
+  agent lifecycle metadata to a same-host Town live server. Registers no tools,
+  injects no context, and returns no control directive.
+author: brent-at-realty
 license: MIT
-homepage: https://github.com/sxuff/hermes-town
+homepage: https://github.com/brent-at-realty/hermes-town
 tags: [visualization, observability, privacy]
 provides_tools: []
 provides_hooks:

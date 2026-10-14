@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "files": {
-    "LICENSE": "d1cd93945a884eb8b3f10a5be756af3d5829331112f59dd48b3542e743d35e23",
+    "LICENSE": "06819b590ce85984e8dc281cf225e51cdce6e02e5145ce575d89426641173b87",
     "THIRD-PARTY-NOTICES.txt": "5f268ebfc29c575ef7a3d969d9443e567bec5d8228a01eef0a19c677b94a6a8d",
     "dist/assets/buildings-Bu9E6D0o.png": "36ab8f11d9c27d3a6c29da2b61ed5c35b92241d37fe422a38d6f3abe918602ef",
     "dist/assets/equipment-DmrEfDcY.png": "42f0161a2c28cb03ce49ac1ceff67c06189bdb31cfde3cc8b15d6ea2d12ce7b4",
@@ -12,7 +12,7 @@
     "dist/assets/props-BDaQ7grA.png": "f1c7e6c70a74164fdbd3105fb76496e42874522f87b43a7a05dcc770612dbb48",
     "dist/assets/vegetation-DUNhAQA5.png": "9969bd5cba5a3f4f49756fde40df48f96c8d5f061a56b6ac260322bd9c8a4f1a",
     "dist/favicon.svg": "37ff6a9b15c7913753bc4516d1ceeba83d920a915b6d7fb37887e4a9889acf5f",
-    "dist/index.html": "8567d3c3e36b27d3c0f7eff74bc103e8262b1595ebea8f634a3e911bcdb8cda2",
+    "dist/index.html": "5525f00016a6ef168910c8f524d395827c27f6d7082492ff7070283096078854",
     "server/lib/contract.mjs": "bb6c85824e09d2c916f392ef0ecb1691b1412fcf3aa313b590c6f31d270cd5c1",
     "server/lib/cronSeed.mjs": "58a35e9349ac7db5f9dab08c31c73c067f2b6411f50dc632ab46666019e5996b",
     "server/lib/ingress.mjs": "40c6f0eceb5944d69be327e97296aa6f56620e79024298f5bb196f7054792da4",
@@ -23,12 +23,12 @@
     "server/townServer.mjs": "43c6410479a920cecd37fdf3af3fa92aacea2fa3f13ce781a60266b5200b39c6"
   },
   "sources": {
-    "LICENSE": "d1cd93945a884eb8b3f10a5be756af3d5829331112f59dd48b3542e743d35e23",
-    "index.html": "559abc7621e0f541fdac2decfbdfd41e20ca6ee77591e0d5feb24883a9122b13",
-    "package-lock.json": "d2f8357404de6df605731a5ffdb6b7cf9c270fe5d280fd4a747174daed64454a",
-    "package.json": "f34ee810e0b8c7a79d6584ce5c06ea1eb5b32482b9196815343b4c8ec157d655",
+    "LICENSE": "06819b590ce85984e8dc281cf225e51cdce6e02e5145ce575d89426641173b87",
+    "index.html": "be2e5b195424fa3bb4541137ba1657731de3a0ef791d91a74a025799b36fb09c",
+    "package-lock.json": "b8655a09fc5a5548cf0b3893d4ff3b79fe7b60da7570c56bc4e01a7404c20bee",
+    "package.json": "29cec6e945d42b5b49d5008c366a85da12575c71a423464f1b08ec1af18207ee",
     "public/favicon.svg": "37ff6a9b15c7913753bc4516d1ceeba83d920a915b6d7fb37887e4a9889acf5f",
-    "scripts/package-plugin.mjs": "fd4add88842d3306af630433cbba9beab5332172a191320901e355560c3064b7",
+    "scripts/package-plugin.mjs": "0ba70e9bb27145fa118bb5b4ff285493c9e40319b9ca57f7e1a47190dc994387",
     "server/lib/contract.mjs": "bb6c85824e09d2c916f392ef0ecb1691b1412fcf3aa313b590c6f31d270cd5c1",
     "server/lib/cronSeed.mjs": "58a35e9349ac7db5f9dab08c31c73c067f2b6411f50dc632ab46666019e5996b",
     "server/lib/ingress.mjs": "40c6f0eceb5944d69be327e97296aa6f56620e79024298f5bb196f7054792da4",

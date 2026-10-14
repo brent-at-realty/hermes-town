@@ -9,9 +9,12 @@ HERMES_TOWN_BRIDGE_TOKEN_FILE, prints only the derived key, and writes nothing.
 
 from __future__ import annotations
 
+import atexit
 import importlib.util
 import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -36,6 +39,10 @@ def main() -> int:
         raise RuntimeError("HERMES_TOWN_BRIDGE_TOKEN_FILE is required")
     if len(sys.argv) != 2:
         raise RuntimeError("usage: derive-cron-key.py <job-id>")
+    # Hermetic: never let the real Hermes home (e.g. an enabled legacy plugin) change registration.
+    home = tempfile.mkdtemp(prefix="hermes-town-test-home-")
+    atexit.register(shutil.rmtree, home, True)
+    os.environ["HERMES_HOME"] = home
     plugin = load_plugin()
     plugin._reset_bridge_for_tests()
     ctx_hooks: dict = {}

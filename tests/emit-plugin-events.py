@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import atexit
 import importlib.util
 import json
 import os
+import shutil
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -42,6 +45,10 @@ def main() -> int:
     if not os.environ.get("HERMES_TOWN_BRIDGE_TOKEN_FILE"):
         raise RuntimeError("HERMES_TOWN_BRIDGE_TOKEN_FILE is required")
 
+    # Hermetic: never let the real Hermes home (e.g. an enabled legacy plugin) change registration.
+    home = tempfile.mkdtemp(prefix="hermes-town-test-home-")
+    atexit.register(shutil.rmtree, home, True)
+    os.environ["HERMES_HOME"] = home
     plugin = load_plugin()
     plugin._reset_bridge_for_tests()
     ctx = Context()
