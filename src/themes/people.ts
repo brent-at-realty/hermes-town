@@ -13,13 +13,16 @@ export const TOWNSFOLK: PeopleKit = {
 export const MARKET_FOLK: PeopleKit = {
   id: 'market-folk',
   label: 'Market folk',
-  description: 'Brimmed hats, long coats and jewel-coloured cloth.',
+  description: 'Plumed brimmed hats, long coats with gold and crimson edging, and a bright sash.',
   textureTag: 'mf',
   hat: 'brim',
   garment: 'coat',
   trim: '#d9b34a',
   hatColor: '#3a2548',
   plume: '#d6456a',
+  sash: '#e9c24f',
+  hemBand: '#b0304f',
+  satchel: false,
   hair: ['#1c1428', '#4a2a40', '#8a4a2a', '#c9a35a', '#d8d0e8'],
   cloth: ['#7a2a4a', '#2a5a6a', '#6a3a8a', '#9a6a2a', '#2a4a7a', '#8a2a2a'],
   pants: ['#2a2040', '#3a2a50', '#2a2a3a'],
@@ -29,15 +32,19 @@ export const MARKET_FOLK: PeopleKit = {
 export const PLAINCLOTHES: PeopleKit = {
   id: 'plainclothes',
   label: 'Plain clothes',
-  description: 'Bare-headed and unadorned: the quietest way to read a crowd.',
+  description: 'Bare-headed, short hair, a coloured tunic over linen sleeves, pale trousers: no hats, aprons, belts or satchels.',
   textureTag: 'pc',
   hat: 'none',
-  garment: 'tunic',
+  hairStyle: 'short',
+  garment: 'jacket',
   apron: false,
   beard: false,
   satchel: false,
   belt: false,
   trim: '#e6dcc4',
+  sleeve: '#e6dcc4',
+  hair: ['#3a2c24', '#4a3a2e', '#5a4a3a'],
+  pants: ['#a8a294'],
   cloth: ['#6a6a72', '#58606a', '#6a6258', '#585868'],
   preview: ['#6a6a72', '#58606a', '#6a6258', '#585868'],
 };
@@ -65,6 +72,10 @@ export function applyPeopleKit(look: Look, kit: PeopleKit, seed: string, profile
   if (kit.plume !== undefined) next.plume = kit.plume;
   if (kit.satchel !== undefined) next.satchel = kit.satchel;
   if (kit.belt !== undefined) next.belt = kit.belt;
+  if (kit.hairStyle !== undefined) next.hairStyle = kit.hairStyle;
+  if (kit.sash !== undefined) next.sash = kit.sash;
+  if (kit.hemBand !== undefined) next.hemBand = kit.hemBand;
+  if (kit.sleeve !== undefined) next.sleeve = kit.sleeve;
   if (kit.hair) next.hair = pick(kit.hair, 'hair');
   if (kit.pants) next.pants = pick(kit.pants, 'pants');
   if (kit.cloth) next.cloth = pick(kit.cloth, 'cloth');

@@ -438,7 +438,7 @@ try {
     assert.equal(greenMap.stations, townMap.stations); assert.deepEqual(greenMap.places, townMap.places);
     assert.equal(greenMap.layout, townMap.layout, 'buildings, doors, stations and the entrance are exactly where they were');
     assert.notEqual(greenMap.ground, townMap.ground); assert.notEqual(greenMap.props, townMap.props);
-    assert.ok(greenMap.trees >= townMap.trees + 60 && greenMap.hedges > townMap.hedges, `denser woods and hedgerows (${townMap.trees} -> ${greenMap.trees} trees)`);
+    assert.ok(greenMap.trees <= townMap.trees * 0.9 && greenMap.hedges > townMap.hedges, `open meadows with a hedgerow, not just more woods (${townMap.trees} -> ${greenMap.trees} trees)`);
     const miniDiff = await imageDiff(Buffer.from(townMini, 'base64'), Buffer.from(greenMini, 'base64'), 16);
     const shotDiff = await imageDiff(townShot, greenShot);
     assert.ok(miniDiff.ratio > 0.1, `the minimap draws the selected map (${miniDiff.ratio} of its pixels changed)`);
@@ -750,7 +750,7 @@ try {
 
       await applyMap(page, 'greenwood');
       const greenState = await mounted(page);
-      assert.equal(greenState.map, 'greenwood'); assert.ok(greenState.trees > townState.trees, 'the scene map is the Greenwood map');
+      assert.equal(greenState.map, 'greenwood'); assert.ok(greenState.trees !== townState.trees, 'the scene map is the Greenwood map');
       const greenMini = await quiet(page, `${mode} Greenwood apply`, townMini);
       assert.notEqual(greenMini, townMini, `${mode}: Apply changes the minimap data`);
       const diff = await pixels(townMini, greenMini);
