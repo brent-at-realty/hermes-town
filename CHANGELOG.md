@@ -1,6 +1,17 @@
 # Changelog
 
-All notable changes to Hermes Town are documented here.
+All notable changes to Hermes Town Brent (formerly published as Hermes Town) are documented here.
+
+## 0.5.0 - 2026-10-14
+
+Version rationale: pre-1.0 semver; the distributable plugin identity (manifest name, install/enable/update/remove ids, install directory, metadata key) changes from `hermes-town` to `hermes-town-brent`, which is a breaking change for anyone scripting the old id, so the minor version is bumped. No runtime behaviour, wire protocol or state layout changes.
+
+### Hermes Town Brent identity
+
+- Plugin id is now **`hermes-town-brent`** (`plugin.yaml`, `package.json`, developer installer target `plugins/hermes-town-brent`, install-metadata key, docs, tests). The `hermes town` command, `$HERMES_HOME/hermes-town/` and `hermes-town-shared/` state, the `hermes-town.*.v1` wire/registry versions, `HERMES_TOWN_*` environment variables and the `hermes-town.appearance` browser key are deliberately unchanged, so existing tokens and journals keep working and nothing is migrated or deleted automatically.
+- Source of record is `brent-at-realty/hermes-town`. Documentation no longer links to the earlier source; provenance is stated in the README and the original copyright notice remains in `LICENSE`.
+- Legacy-plugin guard (`integrations/hermes-town-plugin/legacy_guard.py`): when the legacy `hermes-town` plugin is enabled in the same Hermes home, `hermes-town-brent` logs how to switch and registers nothing, and the developer installer refuses before writing anything. An installed-but-disabled legacy plugin is reported and left untouched. Both checks are read-only.
+- Tests: `tests/verify-town-cli.py` (`LegacyPluginGuard`) and `tests/verify-package.mjs` (installer legacy cases).
 
 ## 0.4.0 - 2026-10-14
 

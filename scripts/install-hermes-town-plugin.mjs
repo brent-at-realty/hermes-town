@@ -37,7 +37,53 @@ function managed(target) {
   const value = JSON.parse(fs.readFileSync(metadata, 'utf8'));
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid Hermes install metadata; refusing to overwrite');
   // Preserve every Hermes-managed installation, including exact-SHA git installs.
-  return Object.hasOwn(value, 'hermes-town');
+  return Object.hasOwn(value, PLUGIN_NAME);
+}
+const PLUGIN_NAME = 'hermes-town-brent';
+const LEGACY_PLUGIN_NAME = 'hermes-town';
+// Mirror of integrations/hermes-town-plugin/legacy_guard.py: read-only, never edits config or state.
+function enabledPlugins(text) {
+  const names = [];
+  let inPlugins = false;
+  let inEnabled = false;
+  let enabledIndent = 0;
+  const unquote = (item) => {
+    let value = item.split(' #')[0].trim();
+    if (value.length >= 2 && value[0] === value.at(-1) && '\'"'.includes(value[0])) value = value.slice(1, -1);
+    return value.trim();
+  };
+  for (const raw of text.split(/\r?\n/)) {
+    const stripped = raw.trim();
+    if (!stripped || stripped.startsWith('#')) continue;
+    const indent = raw.length - raw.trimStart().length;
+    if (indent === 0) { inPlugins = /^plugins:\s*(#.*)?$/.test(raw); inEnabled = false; continue; }
+    if (!inPlugins) continue;
+    const key = /^enabled:\s*(.*)$/.exec(stripped);
+    if (key && !inEnabled) {
+      const rest = key[1].split(' #')[0].trim();
+      if (rest.startsWith('[') && rest.endsWith(']')) names.push(...rest.slice(1, -1).split(',').filter((part) => part.trim()).map(unquote));
+      else if (rest === '') { inEnabled = true; enabledIndent = indent; }
+      continue;
+    }
+    if (inEnabled) {
+      if (indent < enabledIndent || (indent === enabledIndent && !stripped.startsWith('- '))) { inEnabled = false; continue; }
+      if (stripped.startsWith('- ')) names.push(unquote(stripped.slice(2)));
+    }
+  }
+  return names.filter(Boolean);
+}
+function legacyState(home) {
+  const installed = exists(path.join(home, 'plugins', LEGACY_PLUGIN_NAME)) !== null;
+  let enabled = false;
+  const config = path.join(home, 'config.yaml');
+  const stat = exists(config);
+  if (stat?.isFile() && stat.size <= 1024 * 1024) enabled = enabledPlugins(fs.readFileSync(config, 'utf8')).includes(LEGACY_PLUGIN_NAME);
+  return { installed, enabled };
+}
+function legacyConflictMessage(home) {
+  return `Legacy plugin '${LEGACY_PLUGIN_NAME}' is enabled in ${home}. ${PLUGIN_NAME} will not be installed beside an enabled legacy plugin (both own the \`hermes town\` command and the same lifecycle hooks) and the legacy plugin is never overwritten.\n`
+    + `To switch, as the operator:\n  hermes town stop            # while the legacy plugin is still enabled\n  hermes plugins disable ${LEGACY_PLUGIN_NAME}   # or: hermes plugins remove ${LEGACY_PLUGIN_NAME}\n  node scripts/install-hermes-town-plugin.mjs --hermes-home ${home}\n`
+    + `Existing state under ${path.join(home, 'hermes-town')} is kept and shared; nothing is migrated or deleted automatically.`;
 }
 function payload(source) {
   safePath(source);
@@ -85,8 +131,11 @@ function main() {
   const home = path.resolve(rawHome.replace(/^~(?=$|\/)/, os.homedir()));
   safePath(home);
   if (!exists(home)?.isDirectory()) throw new Error(`Hermes home does not exist or is not a directory: ${home}`);
-  const target = path.join(home, 'plugins/hermes-town');
+  const target = path.join(home, 'plugins/hermes-town-brent');
   safePath(target);
+  // Legacy `hermes-town` guard: runs before any read of the payload or any write.
+  const legacy = legacyState(home);
+  if (legacy.enabled) throw new Error(legacyConflictMessage(home));
   const catalogManaged = managed(target);
   const source = catalogManaged ? target : path.join(ROOT, 'integrations/hermes-town-plugin');
   const files = payload(source); // Verify complete bundle BEFORE any target/token write.
@@ -116,7 +165,8 @@ function main() {
   console.log(catalogManaged ? 'Hermes-managed plugin left untouched; bundled runtime verified.' : 'Prebuilt Hermes Town plugin installed (developer fallback).');
   console.log(`Bridge token ${outcome}, mode 0600; value not printed.`);
   console.log('No configuration changed; no plugin enabled; no process started or restarted.');
-  console.log('\nNext, as the operator:\n  hermes plugins enable hermes-town\n  hermes town start\n  hermes town status');
+  if (legacy.installed) console.log(`Note: legacy plugin '${LEGACY_PLUGIN_NAME}' is still installed (not enabled) at ${path.join(home, 'plugins', LEGACY_PLUGIN_NAME)}. It was not touched. Do not enable both; state under ${path.join(home, 'hermes-town')} is shared and left in place.`);
+  console.log('\nNext, as the operator:\n  hermes plugins enable hermes-town-brent\n  hermes town start\n  hermes town status');
   console.log('Start a new Hermes CLI session or explicitly restart the surface you want to observe.');
 }
 try { main(); } catch (error) { console.error(error.message); process.exitCode = 1; }

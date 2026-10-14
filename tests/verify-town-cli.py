@@ -474,5 +474,85 @@ class TownCLIShared(unittest.TestCase):
             if cli.owned(state): cli.stop_owned(state)
 
 
+class LegacyPluginGuard(unittest.TestCase):
+    """The renamed plugin never runs beside, or over, an enabled legacy `hermes-town` plugin."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="town-legacy-test-")
+        self.home = Path(self.temp.name)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("HERMES_TOWN_")}
+        env["HERMES_HOME"] = str(self.home)
+        self.env = patch.dict(os.environ, env, clear=True)
+        self.env.start()
+        spec_g = importlib.util.spec_from_file_location("town_legacy_guard", PLUGIN / "legacy_guard.py")
+        self.guard = importlib.util.module_from_spec(spec_g)
+        spec_g.loader.exec_module(self.guard)
+
+    def tearDown(self):
+        self.env.stop()
+        self.temp.cleanup()
+
+    def config(self, text):
+        (self.home / "config.yaml").write_text(text)
+
+    def register(self):
+        class Ctx:
+            def __init__(self): self.hooks, self.commands = [], []
+            def register_hook(self, *args): self.hooks.append(args)
+            def register_cli_command(self, **kwargs): self.commands.append(kwargs)
+        ctx = Ctx()
+        plugin.register(ctx)
+        return ctx
+
+    def test_manifest_identity(self):
+        manifest = (PLUGIN / "plugin.yaml").read_text()
+        self.assertIn("name: hermes-town-brent\n", manifest)
+        self.assertNotIn("sxuff", manifest)
+        self.assertIn("https://github.com/brent-at-realty/hermes-town", manifest)
+
+    def test_enabled_list_parsing(self):
+        parse = self.guard.enabled_plugins
+        self.assertEqual(parse("plugins:\n  enabled:\n    - a\n    - 'hermes-town'  # x\n  disabled: []\nother:\n  enabled:\n    - nope\n"), ["a", "hermes-town"])
+        self.assertEqual(parse("plugins:\n  enabled: [a, \"hermes-town\"]\n"), ["a", "hermes-town"])
+        self.assertEqual(parse("plugins:\n  enabled:\n  - hermes-town-brent\n"), ["hermes-town-brent"])
+        self.assertEqual(parse("plugins:\n  disabled:\n    - hermes-town\n  enabled: []\n"), [])
+        self.assertEqual(parse("not: yaml: at all\n\x00"), [])
+
+    def test_no_legacy_registers_normally(self):
+        self.assertEqual(self.guard.legacy_state(str(self.home)), {"installed": False, "enabled": False})
+        ctx = self.register()
+        self.assertEqual(len(ctx.hooks), 10)
+        self.assertEqual(ctx.commands[0]["name"], "town")
+
+    def test_installed_but_disabled_legacy_does_not_block(self):
+        (self.home / "plugins/hermes-town").mkdir(parents=True)
+        self.config("plugins:\n  enabled:\n    - hermes-town-brent\n  disabled:\n    - hermes-town\n")
+        self.assertEqual(self.guard.legacy_state(str(self.home)), {"installed": True, "enabled": False})
+        ctx = self.register()
+        self.assertEqual(len(ctx.hooks), 10)
+
+    def test_enabled_legacy_leaves_plugin_inert_and_changes_nothing(self):
+        legacy = self.home / "plugins/hermes-town"
+        legacy.mkdir(parents=True)
+        (legacy / "marker").write_text("legacy bytes")
+        text = "plugins:\n  enabled:\n    - hermes-town\n    - hermes-town-brent\n"
+        self.config(text)
+        with self.assertLogs(plugin.logger, level="WARNING") as logs:
+            ctx = self.register()
+        self.assertEqual((ctx.hooks, ctx.commands), ([], []))
+        message = "\n".join(logs.output)
+        self.assertIn("hermes plugins disable hermes-town", message)
+        self.assertIn("hermes town stop", message)
+        self.assertIn("nothing is migrated or deleted", message)
+        self.assertEqual((self.home / "config.yaml").read_text(), text)
+        self.assertEqual((legacy / "marker").read_text(), "legacy bytes")
+        self.assertFalse((self.home / "hermes-town").exists())
+
+    def test_guard_failure_never_breaks_loading(self):
+        with patch.dict(sys.modules, {plugin.__name__ + ".legacy_guard": None}):
+            ctx = self.register()
+        self.assertEqual(len(ctx.hooks), 10)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

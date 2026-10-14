@@ -75,6 +75,8 @@ def main() -> int:
         os.chmod(token_path, stat.S_IRUSR | stat.S_IWUSR)
         os.environ["HERMES_TOWN_BRIDGE_TOKEN_FILE"] = str(token_path)
         os.environ["HERMES_TOWN_BRIDGE_URL"] = "http://127.0.0.1:1/api/town/ingest"
+        # Hermetic: the real Hermes home (e.g. an enabled legacy plugin) must not change registration.
+        os.environ["HERMES_HOME"] = str(Path(tmp) / "home")
 
         plugin = load_plugin()
         plugin._reset_bridge_for_tests()

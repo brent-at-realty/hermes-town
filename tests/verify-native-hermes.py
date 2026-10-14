@@ -31,8 +31,8 @@ with tempfile.TemporaryDirectory(prefix='town-native-hermes-') as tmp:
         return p.stdout
     def town(*words): return command([args.hermes,'town',*words])
     command(['node',str(root/'scripts/install-hermes-town-plugin.mjs'),'--hermes-home',str(home)])
-    command([args.hermes,'plugins','enable','hermes-town','--no-allow-tool-override'])
-    installed=home/'plugins/hermes-town'
+    command([args.hermes,'plugins','enable','hermes-town-brent','--no-allow-tool-override'])
+    installed=home/'plugins/hermes-town-brent'
     assert (installed/'runtime/dist/index.html').is_file()
     assert not (installed/'node_modules').exists()
     before=json.loads(town('status','--json'))
