@@ -53,7 +53,7 @@ hermes town setup           # optional prerequisite/token check without starting
 
 `start` creates a private token if needed and launches the bundled server on loopback. Repeating it reuses the same healthy managed process. `stop` authenticates that exact process with a separate private management secret, never a PID from a stale file. It does not disable the Hermes plugin. The server is not a login service: after reboot, run `hermes town start` again.
 
-Until then, or without the catalog, a Git install of the exact reviewed commit is supported by Hermes (`hermes plugins install "brent-at-realty/hermes-town#integrations/hermes-town-plugin" --ref <40-hex commit>`; see `hermes plugins install --help`), and the developer fallback below copies the same bytes. The plugin never downloads replacements for its reviewed code.
+Until then, or without the catalog, a Git install of the exact reviewed commit is supported by Hermes (`hermes plugins install "brent-at-realty/hermes-town#integrations/hermes-town-plugin" --ref <40-hex commit>`; see `hermes plugins install --help`), and the developer fallback below copies the same bytes. It installs as `hermes-town-brent`. Hermes treats a non-catalog source as unreviewed: its install scanner reports `caution` findings for this plugin (a launcher that starts the bundled Node server with `subprocess`, and the minified browser bundle) and refuses the install unless you review them and pass `--force`. Catalog-pinned installs accept `caution` without a prompt, which is why the catalog path is preferred when available. The plugin never downloads replacements for its reviewed code.
 
 ### Switching from the legacy `hermes-town` plugin
 
