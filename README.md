@@ -4,7 +4,7 @@ A local pixel-art interface for Hermes Agent. Plugin id `hermes-town-brent`; the
 
 ![Hermes Town Brent](artifacts/world-remodel.png)
 
-> v0.6.0 is the current release under the independent **Hermes Town Brent** identity (plugin id `hermes-town-brent`, introduced in v0.5.0). It packages the bridge, local server, and prebuilt town together, serves one shared Town for every local Hermes profile, and has the Appearance drawer. Runtime use needs Hermes and Node.js, not a repository checkout, npm, or a frontend build. It is installed from this repository; it is not the `hermes-town` plugin-catalog entry and is not listed in the Hermes plugin catalog unless a separate catalog entry says so. See [Switching from the legacy `hermes-town` plugin](#switching-from-the-legacy-hermes-town-plugin).
+> v0.6.1 is the current release under the independent **Hermes Town Brent** identity (plugin id `hermes-town-brent`, introduced in v0.5.0). It packages the bridge, local server, and prebuilt town together, serves one shared Town for every local Hermes profile, and has the Appearance drawer. Runtime use needs Hermes and Node.js, not a repository checkout, npm, or a frontend build. It is installed from this repository; it is not the `hermes-town` plugin-catalog entry and is not listed in the Hermes plugin catalog unless a separate catalog entry says so. See [Switching from the legacy `hermes-town` plugin](#switching-from-the-legacy-hermes-town-plugin).
 
 ## Requirements
 

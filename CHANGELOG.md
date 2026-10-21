@@ -2,7 +2,7 @@
 
 All notable changes to Hermes Town Brent (formerly published as Hermes Town) are documented here.
 
-## Unreleased
+## 0.6.1 - 2026-10-21
 
 Version rationale: patch, presentation only. No wire protocol, plugin id, state layout, lifecycle or privacy change.
 
