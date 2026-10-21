@@ -2,7 +2,9 @@
 
 All notable changes to Hermes Town Brent (formerly published as Hermes Town) are documented here.
 
-## Unreleased
+## 0.6.2 - 2026-10-21
+
+Version rationale: patch, presentation only. Known follow-up (not changed in this release): `TRAFFIC_SPEED` and the actual lane speeds do not yet share one authoritative source.
 
 Presentation only. No wire protocol, plugin id, state layout, lifecycle or privacy change; a ride is still a drawn route and never an event, resident or state.
 
