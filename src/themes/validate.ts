@@ -85,7 +85,7 @@ export function validateMap(map: TownMap, preset: Pick<MapPreset, 'id' | 'view'>
   const reachable = (to: { x: number; y: number }) => (map.transit ? map.transit.route(map.entrance, to) : findPath(map.grid, map.entrance, to));
   for (const t of targets) if (!reachable(t.tile)) at(`${t.id} is not reachable from the entrance`);
   if (map.transit) {
-    out.push(...validateTransit(map.grid, map.entrance, map.transit.connectors, preset.id));
+    out.push(...validateTransit(map.grid, map.entrance, map.transit.connectors, preset.id, map.transit.districts));
     const preview = (preset as Partial<MapPreset>).routeNote;
     if (!preview || !/not a separate Hermes lifecycle signal/.test(preview)) at('a map with transit must say its lifts or shuttles are not a lifecycle signal');
   }
@@ -107,6 +107,38 @@ export function validateMap(map: TownMap, preset: Pick<MapPreset, 'id' | 'view'>
     if (!hasPropArt(p.kind, p.variant ?? 0)) at(`prop ${p.kind} has no art`);
   }
   for (const s of map.stations) if (!hasPropArt(s.prop.kind)) at(`station prop ${s.prop.kind} has no art`);
+  out.push(...validatePosts(map, preset.id));
+  return out;
+}
+
+/**
+ * Watch posts, when a map authors them: every post is a distinct, walkable tile, outside every building and room,
+ * not on a workstation or a lift or car boarding/exit tile, outside every exclusion rectangle (lift shafts, lift
+ * landings and approaches, car stops), and reachable from the entrance by the map's own routing.
+ */
+export function validatePosts(map: TownMap, mapId: string): string[] {
+  const out: string[] = [];
+  if (!map.posts) return out;
+  const at = (m: string) => out.push(`map ${mapId}: ${m}`);
+  const { w, h, cost } = map.grid;
+  const walkable = (x: number, y: number) => Number.isInteger(x) && Number.isInteger(y) && x >= 0 && y >= 0 && x < w && y < h && cost[y * w + x] !== 0;
+  const inRect = (p: { x: number; y: number }, r: { x: number; y: number; w: number; h: number }) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
+  const buildings = [...map.buildings, ...map.homes];
+  const connectorTiles = (map.transit?.connectors ?? []).flatMap((c) => [c.boarding, c.exit]);
+  const seen = new Set<string>();
+  if (map.posts.length === 0) at('a map that authors posts needs at least one');
+  map.posts.forEach((p, i) => {
+    const name = `post #${i} (${p.x},${p.y})`;
+    if (seen.has(`${p.x},${p.y}`)) at(`${name} duplicates another post`);
+    seen.add(`${p.x},${p.y}`);
+    if (!walkable(p.x, p.y)) { at(`${name} is not a walkable tile`); return; }
+    for (const b of buildings) if (inRect(p, b)) at(`${name} stands inside building ${b.id}`);
+    for (const s of map.stations) if (s.tile.x === p.x && s.tile.y === p.y) at(`${name} stands on workstation ${s.id}`);
+    for (const t of connectorTiles) if (t.x === p.x && t.y === p.y) at(`${name} stands on a lift or car boarding/exit tile`);
+    for (const r of map.postExclusions ?? []) if (inRect(p, r)) at(`${name} lies inside the ${r.kind} exclusion ${r.id}`);
+    const reachable = map.transit ? map.transit.route(map.entrance, p) : findPath(map.grid, map.entrance, p);
+    if (!reachable) at(`${name} is not reachable from the entrance`);
+  });
   return out;
 }
 

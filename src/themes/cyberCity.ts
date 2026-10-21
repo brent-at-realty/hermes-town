@@ -3,12 +3,12 @@ import type { TownTheme } from './types';
 /**
  * Cyber City: a night-time high-rise district. The complete pack is this theme, the Neon operatives people kit, the
  * Cyber City map and a neon-evening environment. Everything here is presentation: places, residents and states come
- * from the lifecycle events, and the lifts on this map are a route representation, not a lifecycle signal.
+ * from the lifecycle events, and the lifts and street cars on this map are a route representation, not a lifecycle signal.
  */
 export const CYBER_CITY: TownTheme = {
   id: 'cyber-city',
   label: 'Cyber City',
-  description: 'Neon high-rise towers at night. Residents ride lifts between floors.',
+  description: 'Neon high-rise towers at night. Residents ride lifts between floors and cars along the street.',
   preview: ['#090c1a', '#35e6ff', '#ff3fa4', '#ffb347'],
   ui: {
     canvasBackground: '#070a16',
@@ -66,7 +66,7 @@ export const CYBER_CITY: TownTheme = {
     motes: null,
   },
   pack: {
-    summary: 'Four neon towers, a street and lifts between floors, with the Neon operatives and a neon night.',
-    routeNote: 'The lift ride is a route representation for a resident that is already on its way to a real workstation. It is not a separate Hermes lifecycle signal and creates no activity.',
+    summary: 'Four neon towers, a two-lane street and lifts between floors, with the Neon operatives and a neon night.',
+    routeNote: 'A lift or street-car ride is a route representation for a resident that is already on its way to a real workstation. It is not a separate Hermes lifecycle signal and creates no activity.',
   },
 };

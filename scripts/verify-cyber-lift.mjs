@@ -63,12 +63,15 @@ async function openCyber(page, { reduced = false } = {}) {
  * Spawn one resident, freeze the scene (it still renders), and drive the simulator by hand until the resident boards.
  * Returns the geometry of the walk to the lift. A frozen scene lets every frame be measured at an exact ride moment.
  */
-const spawnAndWalkToLift = (page) => page.evaluate(() => {
+const spawnAndWalkToLift = (page, startTileX = 58) => page.evaluate((sx) => {
   const t = window.__town, sim = t.sim, s = t.runtime.scene();
   s.scene.pause();
   const id = 'h/main/riderxxxxxxxxxxx';
   sim.push({ id: 'w1', agentId: id, seq: 1, at: 0, type: 'agent.spawned', role: 'coordinator', displayName: 'rider', profile: 'work', paletteSlot: 1 });
   sim.push({ id: 'w2', agentId: id, seq: 2, at: 0, type: 'agent.assigned' });
+  // The resident starts in the Operations district, in front of the Operations Tower (a trip from the gate would, correctly,
+  // begin with a street car: that is covered by verify-cyber-city-refinements). Here the lift approach is the subject.
+  { const first = [...sim.residents.values()][0]; first.x = sx * 16 + 8; first.y = 44 * 16 + 8; }
   const rider = () => [...sim.residents.values()][0];
   const trace = [];
   let r = null;
@@ -81,7 +84,7 @@ const spawnAndWalkToLift = (page) => page.evaluate(() => {
   if (!r || !r.transit) return { error: 'no ride' };
   const legs = r.legs.map((l) => (l.kind === 'walk' ? { kind: 'walk', first: l.points[0], last: l.points[l.points.length - 1], points: l.points } : { kind: 'transit', connectorId: l.connectorId }));
   return { id: r.id, legIndex: r.legIndex, legs, trace, connector: r.transit.connectorId, from: r.transit.from, to: r.transit.to, duration: r.transit.duration, state: r.state, residents: sim.residents.size };
-});
+}, startTileX);
 
 /** After the ride: walk the rest of the way to the station, recording the positions. */
 const walkAfterRide = (page) => page.evaluate(() => {
@@ -122,12 +125,13 @@ const setRide = (page, mode) => page.evaluate((m) => {
   return { elapsed: ride.elapsed, duration: d };
 }, mode);
 
-/** Everything a frame needs about the cabin, the rider, and where world pixels land on the screenshot. */
-const facts = (page) => page.evaluate(() => {
+/** Everything a frame needs about the cabin, the rider (index 0), a bystander (index 1, if any), and where world pixels land on the screenshot. */
+const facts = (page, index = 0) => page.evaluate((idx) => {
   const t = window.__town, sim = t.sim, s = t.runtime.scene();
-  const r = [...sim.residents.values()][0];
+  const r = [...sim.residents.values()][idx];
+  const rider = [...sim.residents.values()][0];
   const snap = s.transit.snapshot()[0];
-  const v = s.transit.active.get(r.id);
+  const v = s.transit.active.get(rider.id);
   const view = s.views.get(r.id);
   const bounds = (o) => { const b = o.getBounds(); return { x: b.x, y: b.y, w: b.width, h: b.height }; };
   return {
@@ -137,12 +141,13 @@ const facts = (page) => page.evaluate(() => {
     passenger: { ...bounds(v.passenger), visible: v.passenger.visible, depth: v.passenger.depth, tint: v.passenger.tintTopLeft },
     label2: { depth: v.label.depth },
     sprite: { visible: view.sprite.visible, depth: view.sprite.depth, ...bounds(view.sprite) },
+    overlayHidden: view.overlayHidden,
     name: { depth: view.name.depth, visible: view.name.visible, ...bounds(view.name) },
     bubble: { depth: view.bubble.depth, visible: view.bubble.visible, ...bounds(view.bubbleBg) },
     emote: { depth: view.emote.depth, visible: view.emote.visible, ...bounds(view.emote) },
     occluders: s.liftOccluders.map((o) => ({ x: o.x, y: o.y, w: o.displayWidth, h: o.displayHeight, depth: o.depth, visible: o.visible, key: o.texture.key })),
   };
-});
+}, index);
 
 /** World rectangle to screenshot pixels, for the current camera. */
 const toBox = (page, [wx, wy, ww, wh]) => page.evaluate(([x, y, w, h]) => {
@@ -168,12 +173,14 @@ const showLift = (page, on) => page.evaluate((visible) => {
   const s = window.__town.runtime.scene();
   if (visible) s.update(0, 0); else for (const o of s.transit.objects()) o.setVisible(false);
 }, on);
-const showLifecycle = (page, on) => page.evaluate((visible) => {
+const showLifecycle = (page, on, index = 0) => page.evaluate(([visible, idx]) => {
   const s = window.__town.runtime.scene();
-  const view = [...s.views.values()][0];
+  const view = [...s.views.values()][idx];
   for (const o of [view.name, view.bubble, view.bubbleBg, view.emote]) o.setVisible(visible);
   if (visible) s.update(0, 0);
-}, on);
+}, [on, index]);
+/** Switch the rider-overlay occlusion (the verification control) and re-render the frame. */
+const setOverlayOcclusion = (page, on) => page.evaluate((enabled) => { const s = window.__town.runtime.scene(); s.riderOverlayOcclusion = enabled; s.update(0, 0); }, on);
 const showSprite = (page, on) => page.evaluate((visible) => { const s = window.__town.runtime.scene(); const view = [...s.views.values()][0]; view.sprite.setVisible(visible); view.shadow.setVisible(visible); }, on);
 const setOccluders = (page, mode) => page.evaluate((m) => {
   const s = window.__town.runtime.scene();
@@ -205,7 +212,8 @@ try {
     const walkable = (p) => g.cost[p.y * g.w + p.x] !== 0;
     const region = (id) => g.regions.find((r) => r.id === id);
     const inside = (p, r) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
-    assert.ok(g.connectors.length >= 36 && g.connectors.every((c) => c.kind === 'lift'), `Cyber City has only lifts (${g.connectors.length})`);
+    assert.ok(g.connectors.filter((c) => c.kind === 'lift').length >= 36 && g.connectors.every((c) => c.kind === 'lift' || c.kind === 'car'), `Cyber City has lifts and street cars (${g.connectors.length})`);
+    g.connectors = g.connectors.filter((c) => c.kind === 'lift');
     const stationRows = new Set(g.stations.map((st) => st.y));
     let checked = 0;
     for (const c of g.connectors) {
@@ -351,32 +359,116 @@ try {
     assert.notEqual(open.ff.passenger.tint, 0xffffff, 'the passenger carries the profile colour');
     await fs.writeFile(path.join(output, 'cyber-lift-3-in-opening.png'), open.withCar);
 
-    // (c) lifecycle indicators over the slab: name tag, bubble and emote are drawn on top of the floor and the cabin
-    const lc = cross.ff;
-    for (const part of ['name', 'bubble', 'emote']) assert.ok(lc[part].depth >= 150000 && lc[part].visible, `${part} is a lifecycle-band object at ${lc[part].depth}`);
-    const lifecycleOver = async () => {
+    // (c) lifecycle labels and the floor. Two contracts, kept apart.
+    //   structural: the RIDER's own name, bubble and emote ride with the passenger and are withheld while it is behind a solid slab
+    //   decorative/other: every other resident's labels stay on top of the same slab, untouched; and a slab raised above them hides them
+    const PARTS = ['name', 'bubble', 'emote'];
+    const boxOf = (f, part) => [f[part].x, f[part].y, f[part].w, f[part].h];
+    /** Share of each label's own pixels that are the label: the frame with it drawn against the frame with it hidden. */
+    const labelRatios = async (boxes, index) => {
       const a = await shot(page);
-      await showLifecycle(page, false); await settle(page);
+      await showLifecycle(page, false, index); await settle(page);
       const b = await shot(page);
-      await showLifecycle(page, true); await settle(page);
+      await showLifecycle(page, true, index); await settle(page);
+      if (process.env.DEBUG_LABELS) { await fs.writeFile(path.join(output, 'dbg-a.png'), a); await fs.writeFile(path.join(output, 'dbg-b.png'), b); }
       const out = {};
-      for (const part of ['name', 'bubble', 'emote']) out[part] = await changed(a, b, await toBox(page, [lc[part].x, lc[part].y, lc[part].w, lc[part].h]));
+      for (const part of PARTS) out[part] = await changed(a, b, await toBox(page, boxes[part]));
       return out;
     };
-    await setRide(page, slabTop + 24); await focus(page, cx, slabTop + 24); await settle(page);
-    const over = await lifecycleOver();
-    for (const part of ['name', 'bubble', 'emote']) assert.ok(over[part] > 0.08, `the ${part} is drawn over the slab and cabin (${over[part].toFixed(2)})`);
-    // the bubble and emote really sit over the solid slab here, so lifting the slab above them must fail the check
-    const bubbleOnSlab = lc.bubble.y + lc.bubble.h > slabTop && lc.bubble.y < slabBottom;
-    assert.ok(bubbleOnSlab, 'the bubble overlaps the slab in this frame');
-    await setOccluders(page, 'above-lifecycle'); await settle(page);
-    const bad = await lifecycleOver();
-    assert.ok(bad.bubble < over.bubble * 0.5, `control: a slab raised above the indicators hides the bubble, and the check sees it (${over.bubble.toFixed(2)} -> ${bad.bubble.toFixed(2)})`);
-    await setOccluders(page, 'normal'); await settle(page);
-    const back = await lifecycleOver();
-    assert.ok(Math.abs(back.bubble - over.bubble) < 0.1, 'reset returns the indicators on top');
-    receipts.lifecycleOverFloor = { normal: over, controlSlabAboveIndicators: bad };
 
+    // a bystander stands at the front edge of the F1 deck of the Operations Tower, in line with the lift, its bubble wholly over the lower half of the very slab the rider passes behind, with its own labels
+    await page.evaluate(() => {
+      const t = window.__town, sim = t.sim, s = t.runtime.scene();
+      const id = 'h/cron/bystanderxxxxxxx';
+      sim.push({ id: 'b1', agentId: id, seq: 1, at: 0, type: 'agent.spawned', role: 'scheduled', displayName: 'on watch' });
+      const b = sim.residents.get(id);
+      b.queue.length = 0; b.intent = null; b.legs = []; b.path = []; b.transit = null; b.state = 'posted'; b.anim = 'stand'; b.facing = 'down';
+      b.x = 45 * 16 + 8; b.y = 37 * 16 + 8; b.bubble = 'on watch'; b.emote = 'ok'; b.emoteUntil = Infinity;
+      s.update(0, 0);
+    });
+    assert.equal((await facts(page)).residents, 2, 'the rider and one bystander');
+
+    // c1. mid-slab: the rider is behind the F1 slab. Its overlay is withheld; the bystander's is not.
+    await setRide(page, slabTop + 24); await focus(page, cx, slabTop + 24); await settle(page);
+    const behindOn = await facts(page);
+    assert.equal(behindOn.overlayHidden, true, 'the rider is flagged as behind a slab');
+    assert.ok(behindOn.passenger.y >= slabTop && behindOn.passenger.y + behindOn.passenger.h <= slabBottom, 'the passenger lies within the slab');
+    for (const part of PARTS) assert.equal(behindOn[part].visible, false, `the rider's ${part} is withheld while it is behind the slab`);
+    assert.ok(behindOn.name.depth >= 150000, 'the name is still a lifecycle-band object: it is withheld, not covered by drawing order');
+    // the boxes where the labels would be: the same frame with the occlusion switched off (the control)
+    await setOverlayOcclusion(page, false); await settle(page);
+    const behindOff = await facts(page);
+    for (const part of PARTS) assert.ok(behindOff[part].visible, `control: with the occlusion disabled the rider's ${part} is drawn`);
+    const boxes = Object.fromEntries(PARTS.map((p) => [p, boxOf(behindOff, p)]));
+    assert.ok(boxes.name[1] + boxes.name[3] > slabTop && boxes.name[1] < slabBottom, 'the rider\'s name tag would sit over the slab in this frame');
+    const ratioOff = await labelRatios(boxes, 0);
+    for (const part of PARTS) assert.ok(ratioOff[part] > 0.08, `control: the rider's ${part} is plainly drawn over the slab without the occlusion (${ratioOff[part].toFixed(2)}), so the check can fail ${JSON.stringify({ boxes, behindOff: { name: behindOff.name, bubble: behindOff.bubble, emote: behindOff.emote, car: behindOff.car, pass: behindOff.passenger } })}`);
+    const behindShotOff = await shot(page);
+    await setOverlayOcclusion(page, true); await settle(page);
+    const ratioOn = await labelRatios(boxes, 0);
+    for (const part of PARTS) assert.ok(ratioOn[part] < 0.03, `the rider's ${part} is absent behind the slab (${ratioOn[part].toFixed(3)})`);
+    const behindShotOn = await shot(page);
+    await fs.writeFile(path.join(output, 'cyber-lift-6-rider-label-behind-slab.png'), behindShotOn);
+    await fs.writeFile(path.join(output, 'cyber-lift-6-control-label-without-occlusion.png'), behindShotOff);
+
+    // c2. the bystander on the same slab: untouched, with and without the rider's occlusion
+    const by = await facts(page, 1);
+    assert.equal(by.overlayHidden, false);
+    for (const part of PARTS) assert.ok(by[part].visible && by[part].depth >= 150000, `the bystander's ${part} stays visible in the lifecycle band while the rider is behind the slab`);
+    const byBoxes = Object.fromEntries(PARTS.map((p) => [p, boxOf(by, p)]));
+    const byOn = await labelRatios(byBoxes, 1);
+    for (const part of PARTS) assert.ok(byOn[part] > 0.08, `the bystander's ${part} is drawn on top of the slab (${byOn[part].toFixed(2)})`);
+    await setOverlayOcclusion(page, false); await settle(page);
+    const byOff = await labelRatios(byBoxes, 1);
+    await setOverlayOcclusion(page, true); await settle(page);
+    for (const part of PARTS) assert.ok(Math.abs(byOff[part] - byOn[part]) < 0.1, `the bystander's ${part} is unaffected by the rider's occlusion (${byOn[part].toFixed(2)} vs ${byOff[part].toFixed(2)})`);
+    // the bystander's bubble really overlaps the slab, so raising the slab above the lifecycle band must hide it (the check can fail)
+    const bubbleOnSlab = by.bubble.y + by.bubble.h > slabTop && by.bubble.y < slabBottom;
+    assert.ok(bubbleOnSlab, 'the bystander\'s bubble overlaps the slab in this frame');
+    await setOccluders(page, 'above-lifecycle'); await settle(page);
+    const bad = await labelRatios(byBoxes, 1);
+    assert.ok(bad.bubble < byOn.bubble * 0.5, `control: a slab raised above the lifecycle band hides the bystander's bubble, and the check sees it (${byOn.bubble.toFixed(2)} -> ${bad.bubble.toFixed(2)})`);
+    await setOccluders(page, 'normal'); await settle(page);
+    const back = await labelRatios(byBoxes, 1);
+    assert.ok(Math.abs(back.bubble - byOn.bubble) < 0.1, 'reset returns the labels on top');
+
+    // c3. in a shaft opening the rider's overlay is present again, with the passenger, anchored inside and above the cabin
+    await setRide(page, slabTop - 4); await focus(page, cx, slabTop - 40); await settle(page);
+    const inOpening = await facts(page);
+    assert.equal(inOpening.overlayHidden, false, 'in the opening the rider is not behind a slab');
+    assert.ok(inOpening.passenger.visible);
+    for (const part of PARTS) assert.ok(inOpening[part].visible, `the rider's ${part} is back in the opening`);
+    const openBoxes = Object.fromEntries(PARTS.map((p) => [p, boxOf(inOpening, p)]));
+    const openRatios = await labelRatios(openBoxes, 0);
+    for (const part of PARTS) assert.ok(openRatios[part] > 0.08, `the rider's ${part} is drawn in the opening (${openRatios[part].toFixed(2)})`);
+    // anchored to the cabin, not floating: the name tag sits inside the cabin, the bubble just above it
+    assert.ok(inOpening.name.y >= inOpening.car.y && inOpening.name.y + inOpening.name.h <= inOpening.car.y + inOpening.car.h + 1, 'the name tag is inside the cabin with the passenger');
+    assert.ok(Math.abs(inOpening.name.x + inOpening.name.w / 2 - (inOpening.passenger.x + inOpening.passenger.w / 2)) < 1.5, 'and over the passenger');
+    assert.ok(inOpening.bubble.y + inOpening.bubble.h <= inOpening.car.y + 1, `the bubble is just above the cabin ${JSON.stringify({ bubble: inOpening.bubble, car: inOpening.car })}`);
+    await fs.writeFile(path.join(output, 'cyber-lift-7-rider-label-in-opening.png'), await shot(page));
+    // sweeping the whole ride: the overlay is withheld exactly while the passenger box overlaps a slab of its own tower
+    const sweep = await page.evaluate(() => {
+      const t = window.__town, s = t.runtime.scene(), r = [...t.sim.residents.values()][0], ride = r.transit;
+      const slabs = s.liftOccluders.map((o) => ({ y: o.y, h: o.displayHeight, x: o.x, w: o.displayWidth }));
+      const d = ride.duration, door = Math.min(0.55, Math.max(0.2, d * 0.2));
+      const out = { frames: 0, hiddenFrames: 0, mismatches: [], visibleBetween: 0, segments: 0 };
+      let prev = null;
+      for (let i = 0; i <= 120; i++) {
+        ride.elapsed = door + ((d - 2 * door) * i) / 120; s.update(0, 0);
+        const view = s.views.get(r.id), snap = s.transit.snapshot()[0], p = [...s.transit.active.values()][0].passenger;
+        const behind = slabs.some((sl) => p.x + 4 > sl.x && p.x - 4 < sl.x + sl.w && p.y > sl.y && p.y - 14 < sl.y + sl.h);
+        out.frames += 1; if (view.overlayHidden) out.hiddenFrames += 1;
+        if (view.overlayHidden !== behind || view.name.visible === view.overlayHidden || view.bubble.visible === view.overlayHidden || view.emote.visible === view.overlayHidden) out.mismatches.push({ i, behind, hidden: view.overlayHidden, name: view.name.visible, bubble: view.bubble.visible, emote: view.emote.visible, y: snap.y });
+        if (prev !== null && prev !== view.overlayHidden) out.segments += 1;
+        prev = view.overlayHidden;
+      }
+      return out;
+    });
+    assert.deepEqual(sweep.mismatches, [], 'every frame of the ride agrees with the geometry');
+    assert.ok(sweep.hiddenFrames > 10 && sweep.hiddenFrames < sweep.frames - 10, `the overlay is withheld for part of the ride only (${sweep.hiddenFrames} of ${sweep.frames} frames)`);
+    assert.ok(sweep.segments >= 2, `and returns between decks (${sweep.segments} changes)`);
+    receipts.riderOverlay = { behindSlab: { withheld: true, ratioOn, controlOff: ratioOff }, bystander: { on: byOn, off: byOff, controlSlabAbove: bad }, inOpening: openRatios, sweep: { frames: sweep.frames, hiddenFrames: sweep.hiddenFrames, changes: sweep.segments } };
+    await setRide(page, slabTop + 24); await focus(page, cx, slabTop + 24); await settle(page);
     // --- CONTROLS: the pixel assertion must fail when the occluder is hidden or sunk below the cabin
     const controls = {};
     for (const mode of ['hidden', 'beneath']) {
@@ -416,7 +508,7 @@ try {
 
     // --- after the ride the resident walks from the exit tile along the destination deck
     const after = await walkAfterRide(page);
-    assert.equal(after.residents, 1);
+    assert.equal(after.residents, 2, 'the rider and the bystander');
     assert.ok(Math.hypot(after.start.x - ec.x, after.start.y - ec.y) < 0.5, 'the next leg starts on the exit tile');
     const nextWalk = after.legs[after.legIndex];
     assert.equal(nextWalk.kind, 'walk');
@@ -450,7 +542,7 @@ try {
     assert.equal(await page.locator('#game canvas').count(), 1);
     assert.deepEqual(requests.filter((q) => q.method !== 'GET'), [], 'no write request');
     const done = await page.evaluate(() => { const t = window.__town, s = t.runtime.scene(); const r = [...t.sim.residents.values()][0]; for (let i = 0; i < 4000 && (r.transit || r.anim === 'walk'); i++) s.update(0, 50); for (let i = 0; i < 4; i++) s.update(0, 50); return { residents: t.sim.residents.size, stats: s.transit.stats(), snap: s.transit.snapshot().length }; });
-    assert.equal(done.residents, 1);
+    assert.equal(done.residents, 2, 'the rider and the bystander');
     assert.equal(done.stats.active, 0, 'the ride visual went back to the pool');
     assert.equal(done.snap, 0);
     receipts.pool = done.stats;

@@ -1,6 +1,6 @@
 import { TILE } from './tiles';
 import type { Building, TownMap } from '../world/map';
-import { CYBER_H, CYBER_TOWERS, CYBER_W, LIFT_SHAFT_HALF_W, STREET_YB, TOWER_W, deckTopPx, floorBase, liftOccluderRects, vestibule, type CyberTower } from '../world/cyberCity';
+import { CAR_SIZE, CYBER_H, CYBER_TOWERS, CYBER_W, LIFT_SHAFT_HALF_W, ROAD, STREET_YB, TOWER_W, deckTopPx, floorBase, liftOccluderRects, vestibule, type CyberTower } from '../world/cyberCity';
 import { SCALE, glow, neon, neonText, rect, rng, surface, vgrad, type Surface } from './artKit';
 import { shade } from './painter';
 
@@ -31,7 +31,28 @@ export function cyberAnchors(): CyberAnchors {
     beacons.push({ x: (t.x0 + 9) * TILE + 8, y: top - 58, color: '#ff4a6a' });
   }
   signs.push({ x: 26 * TILE, y: 39 * TILE, w: 14 * TILE, h: 10, color: CYBER.magenta });
-  return { signs, beacons, road: { y0: (STREET_YB + 1) * TILE + 4, y1: (STREET_YB + 4) * TILE }, skyLane: { y: 3 * TILE }, windows: [] };
+  return { signs, beacons, road: { y0: ROAD.y0 + 4, y1: ROAD.y1 }, skyLane: { y: 3 * TILE }, windows: [] };
+}
+
+/**
+ * The decorative and ridden road car: a larger rounded cab with a lit canopy, painted facing right (a westbound car is
+ * flipped). `open` lights the doors and the interior, for a car with a resident stepping in or out.
+ */
+export function paintRoadCar(open: boolean): HTMLCanvasElement {
+  const { w, h } = CAR_SIZE;
+  const s = surface(w, h); const { ctx } = s;
+  rect(ctx, 1.5, h * 0.42, w - 3, h * 0.46, '#dfe8f6');                    // lower body
+  rect(ctx, 1.5, h * 0.74, w - 3, h * 0.1, '#8c96b4');                     // sill shadow
+  rect(ctx, w * 0.2, h * 0.1, w * 0.5, h * 0.34, '#bcd4f4');               // canopy
+  rect(ctx, w * 0.23, h * 0.16, w * 0.19, h * 0.24, open ? '#fff3c8' : '#1a3a6a');
+  rect(ctx, w * 0.48, h * 0.16, w * 0.19, h * 0.24, open ? '#ffe39a' : '#1a3a6a');
+  rect(ctx, w * 0.455, h * 0.44, 1.2, h * 0.38, open ? '#fff3c8' : '#7d8cb0'); // door seam
+  rect(ctx, w - 3.5, h * 0.5, 3.5, h * 0.18, '#ffd36b');                   // headlight (front, facing right)
+  rect(ctx, 0, h * 0.5, 3, h * 0.18, '#ff3a5a');                           // tail light
+  rect(ctx, 4, h * 0.82, 7, h * 0.18, '#0a0e1e'); rect(ctx, w - 12, h * 0.82, 7, h * 0.18, '#0a0e1e'); // wheels
+  rect(ctx, 1.5, h * 0.42, w - 3, 1.2, '#35e6ff');                          // neon trim
+  glow(ctx, w * 0.5, h * 0.95, 11, '#35e6ff', 0.45);                        // under-glow on the wet road
+  return s.canvas;
 }
 
 function topFloor(t: CyberTower): number { return Math.max(...t.floors.map((f) => f.floor)); }
@@ -193,7 +214,18 @@ function paintStreet(ctx: CanvasRenderingContext2D): void {
   const ry = y1, rh = H - y1;
   rect(ctx, 0, ry, W, rh, vgrad(ctx, ry, H, [[0, '#0b0e1c'], [1, '#05060f']]));
   rect(ctx, 0, ry, W, 3, '#3a4678'); neon(ctx, 0, ry + 3, W, 1, 'rgba(53,230,255,0.45)');
-  for (let x = 6; x < W; x += 36) rect(ctx, x, ry + rh / 2, 18, 1.5, 'rgba(255,230,150,0.55)');
+  // The central divider: a bold dashed amber line with a soft glow, the same row the lanes are measured from. Traffic in
+  // each direction keeps to its own side of it (eastbound in the lane nearer the curb, westbound in the far lane).
+  const dy = ROAD.divider - ROAD.dividerThickness / 2;
+  for (let x = 4; x < W; x += 28) { rect(ctx, x, dy, 16, ROAD.dividerThickness, '#ffd36b'); rect(ctx, x, dy - 1, 16, 1, 'rgba(255,211,107,0.35)'); rect(ctx, x, dy + ROAD.dividerThickness, 16, 1, 'rgba(255,211,107,0.35)'); }
+  // lane direction chevrons, painted flat on the asphalt: > in the eastbound lane, < in the westbound lane
+  ctx.save(); ctx.strokeStyle = 'rgba(190,220,255,0.28)'; ctx.lineWidth = 1.6;
+  for (let x = 150; x < W; x += 240) {
+    for (const [lane, dir] of [[ROAD.eastLaneY, 1], [ROAD.westLaneY, -1]] as const) {
+      ctx.beginPath(); ctx.moveTo(x - 4 * dir, lane - 4); ctx.lineTo(x + 3 * dir, lane); ctx.lineTo(x - 4 * dir, lane + 4); ctx.stroke();
+    }
+  }
+  ctx.restore();
   for (const t of CYBER_TOWERS) for (const dx of [0.4, 0.6, 0.8]) {
     ctx.save(); ctx.globalAlpha = 0.16; ctx.fillStyle = t.accent;
     ctx.fillRect(t.x0 * TILE + dx * TOWER_W * TILE, ry + 4, 3, rh - 8); ctx.restore();

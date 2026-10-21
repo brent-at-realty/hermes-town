@@ -2,6 +2,19 @@
 
 All notable changes to Hermes Town Brent (formerly published as Hermes Town) are documented here.
 
+## Unreleased
+
+Presentation only. No wire protocol, plugin id, state layout, lifecycle or privacy change; a ride is still a drawn route and never an event, resident or state.
+
+### Cyber City: street cars, authored watch posts, lift-rider labels, camera floor
+
+- **Street cars.** A resident whose route runs between two Cyber City districts that are not next to each other (Archive, Maker, Operations, Residential, in street order) now walks to the curb, rides a street car along the road and walks on (`walk, car, walk`). A trip to the same or a neighbouring district stays a walk, and a trip within a tower stays a lift. The rule is structural: a car is used only for an authored car link between that ordered pair of districts, never chosen by measuring distance or cost. New `car` transit kind (`TransitKind`, `createTransitNetwork(..., { districts })`, `DistrictModel`); `validateTransit` rejects a car within one district, a missing or duplicated link, and a stop that is not on the street.
+- **Lanes, size, speed.** Cars keep to a lane by direction (eastbound next to the near curb, westbound on the far side) and never cross the bold dashed amber divider painted down the road. Cars are now 40 by 15 px (were 22 by 8), with lane chevrons, and the decorative traffic moves 92 to 104 px/s (was 26 to 50) in both lanes. A car carrying a resident rides in the new `ROAD_RIDE_DEPTHS` band, above the road and the decorative traffic, below every resident, name tag, bubble and emote. Under reduced motion the car stands at the two curb stops with a `Car → <tower>` cue and the traffic is parked, still drawn.
+- **Watch posts.** Cyber City now authors its own ten watch posts (`TownMap.posts`) instead of reusing the lamp posts, so a keeper never stands in a lift approach, shaft, or car stop. `TownMap.postExclusions` lists those zones and `validatePosts` rejects a post that is not walkable, is inside a building, room, workstation, boarding tile or exclusion zone, or is unreachable from the entrance. Maps without `posts` keep the lamp posts.
+- **Lift-rider labels.** While a resident is inside a lift cabin, its own name tag, bubble and emote travel with the passenger and are withheld while the passenger is physically behind a solid deck slab of its own tower (`slabBehindRider`), and shown again in the shaft openings. This is the one structural exception to "nothing covers a label": no other resident's label and no decorative layer is ever affected.
+- **Camera floor.** The camera can no longer zoom out past the point where the world fills the window (`zoomFloor`, `src/world/zoomFloor.ts`): the wheel, the HUD buttons, follow, tweens, resizing and map changes all hold at or above it, on every map. The floor is recomputed per window size and map; zooming in is unchanged (up to 5x).
+- **Verification.** `tests/verify-worlds.mjs` (31 checks) adds contracts for posts, car trips, lane discipline, slab occlusion boundaries and the zoom arithmetic. New `scripts/verify-cyber-city-refinements.mjs` (in `npm run verify:worlds`) drives Chromium against the production build: post validity with forced-invalid controls, keepers on posts and their rendered bubble, car size from rendered pixels against the earlier art, speeds, lanes (a car on the divider fails), the divider as measured dashes, reduced-motion traffic and ride stops, east- and west-lane rides, no car for near trips, and the camera floor on four maps and three window sizes with resize, map change and touch, plus a control that fails with the guard off. `scripts/verify-cyber-lift.mjs` now proves the rider-label contract (withheld behind the slab, back in the opening, with a control and an unaffected bystander).
+
 ## 0.6.1 - 2026-10-21
 
 Version rationale: patch, presentation only. No wire protocol, plugin id, state layout, lifecycle or privacy change.

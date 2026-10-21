@@ -13,13 +13,19 @@ import { findPath, type Grid, type Point } from './pathfind';
  * This module has no Phaser, no DOM and no simulator imports.
  */
 
-export type TransitKind = 'lift' | 'shuttle';
+export type TransitKind = 'lift' | 'shuttle' | 'car';
 
 export type TransitVisual =
   /** A car in a vertical shaft. `floorFrom`/`floorTo` are only labels for the floor indicator. */
   | { kind: 'lift'; tower: string; floorFrom: number; floorTo: number }
   /** A craft on an authored curve. `control` is the Bezier control point, in world pixels. */
-  | { kind: 'shuttle'; from: string; to: string; control: Point };
+  | { kind: 'shuttle'; from: string; to: string; control: Point }
+  /**
+   * A road car in one directional lane of a street. `laneY` is the world-pixel row of the lane's centre line; `from`
+   * and `to` are district ids, and `destination` is the name shown on the car. The lane is fixed by the direction of
+   * travel, so a car never leaves its side of the road divider.
+   */
+  | { kind: 'car'; lane: 'east' | 'west'; laneY: number; from: string; to: string; destination: string };
 
 export interface TransitConnector {
   id: string;
@@ -45,9 +51,26 @@ export interface TransitNetwork {
   byId(id: string): TransitConnector | undefined;
   /** Connected walkable region index of a tile, or -1 when the tile is blocked or outside the grid. */
   regionOf(p: Point): number;
+  /** The district model that decides when a walk becomes a car trip, when the map has one. */
+  readonly districts?: DistrictModel;
   /** A walk-only plan when both tiles share a region, otherwise walk/transit/walk through the cheapest connector chain. */
   route(from: Point, to: Point): RoutePlan | null;
 }
+
+/**
+ * The structural rule for car trips, supplied by a map. A district is a named stretch of street served by one curb
+ * stop; two districts are either the same, neighbours, or apart. A trip inside a district or between neighbours is a
+ * walk (and any lift); a trip between districts that are apart rides the authored car link between their stops. The
+ * rule never measures a distance: it reads the order of the districts the map authored.
+ */
+export interface DistrictModel {
+  /** District id of a street tile, or null when the tile belongs to none. */
+  of(p: Point): string | null;
+  /** True when the two districts are the same or next to each other: no car between them. */
+  adjacent(a: string, b: string): boolean;
+}
+
+export interface TransitOptions { districts?: DistrictModel }
 
 /**
  * Where a lift cabin stands relative to the tile it serves: the distance, in world pixels, from the centre of a
@@ -90,7 +113,7 @@ export function labelRegions(grid: Grid): { labels: Int32Array; count: number } 
 /** Ride time expressed as the equivalent number of walked tiles, so one cost scale serves both. */
 const TILES_PER_SECOND = 2.75;
 
-export function createTransitNetwork(grid: Grid, connectors: readonly TransitConnector[]): TransitNetwork {
+export function createTransitNetwork(grid: Grid, connectors: readonly TransitConnector[], options: TransitOptions = {}): TransitNetwork {
   const { labels } = labelRegions(grid);
   const regionOf = (p: Point): number => (p.x < 0 || p.y < 0 || p.x >= grid.w || p.y >= grid.h ? -1 : labels[p.y * grid.w + p.x]!);
   const walkCache = new Map<string, Point[] | null>();
@@ -101,7 +124,35 @@ export function createTransitNetwork(grid: Grid, connectors: readonly TransitCon
   };
   const cost = (path: Point[]): number => path.length;
 
+  // Authored car links, by ordered pair of districts. A car is never chosen by cost: it is the route between two
+  // districts that are apart, and only when the map authored a link for that pair.
+  const districts = options.districts;
+  const carLinks = new Map<string, TransitConnector>();
+  for (const c of connectors) if (c.visual.kind === 'car') carLinks.set(`${c.visual.from}>${c.visual.to}`, c);
+
+  /** A walk leg between two districts that are apart becomes walk, car, walk. Any other leg is returned unchanged. */
+  const withCar = (leg: RouteLeg): RouteLeg[] => {
+    if (!districts || carLinks.size === 0 || leg.kind !== 'walk' || leg.points.length < 2) return [leg];
+    const a = leg.points[0]!, b = leg.points[leg.points.length - 1]!;
+    const da = districts.of(a), db = districts.of(b);
+    if (!da || !db || da === db || districts.adjacent(da, db)) return [leg];
+    const link = carLinks.get(`${da}>${db}`);
+    if (!link || regionOf(link.boarding) !== regionOf(a) || regionOf(link.exit) !== regionOf(b)) return [leg];
+    const first = walk(a, link.boarding), last = walk(link.exit, b);
+    if (!first || !last) return [leg];
+    return [
+      { kind: 'walk', points: first },
+      { kind: 'transit', connectorId: link.id, from: link.boarding, to: link.exit, durationMs: link.durationMs },
+      { kind: 'walk', points: last },
+    ];
+  };
+
   const route = (from: Point, to: Point): RoutePlan | null => {
+    const plan = routeByRegions(from, to);
+    return plan ? { legs: plan.legs.flatMap(withCar) } : null;
+  };
+
+  const routeByRegions = (from: Point, to: Point): RoutePlan | null => {
     const fr = regionOf(from), tr = regionOf(to);
     if (fr < 0 || tr < 0) return null;
     if (fr === tr) {
@@ -129,6 +180,7 @@ export function createTransitNetwork(grid: Grid, connectors: readonly TransitCon
       }
       for (let j = 0; j < n; j++) {
         const c = connectors[j]!;
+        if (c.visual.kind === 'car') continue; // a car joins a street to itself and is never picked by cost
         if (done[j] || regionOf(c.boarding) !== hereRegion) continue;
         const path = walk(here, c.boarding);
         if (!path) continue;
@@ -160,7 +212,7 @@ export function createTransitNetwork(grid: Grid, connectors: readonly TransitCon
   };
 
   const byId = new Map(connectors.map((c) => [c.id, c] as const));
-  return { connectors, byId: (id) => byId.get(id), regionOf, route };
+  return { connectors, byId: (id) => byId.get(id), regionOf, route, districts };
 }
 
 // ------------------------------------------------------------- timing
@@ -213,16 +265,34 @@ export function transitPoint(connector: TransitConnector, from: Point, to: Point
     const u = 1 - k;
     return { x: u * u * from.x + 2 * u * k * c.x + k * k * to.x, y: u * u * from.y + 2 * u * k * c.y + k * k * to.y };
   }
+  if (connector.visual.kind === 'car') {
+    // pull out from the curb into the lane, drive along the lane, pull in to the curb at the far stop
+    const lane = connector.visual.laneY;
+    return alongPolyline([from, { x: from.x, y: lane }, { x: to.x, y: lane }, to], k);
+  }
   return { x: from.x + (to.x - from.x) * k, y: from.y + (to.y - from.y) * k };
+}
+
+/** The point a fraction `k` of the way along a polyline, by length. */
+function alongPolyline(points: readonly Point[], k: number): Point {
+  let total = 0;
+  for (let i = 0; i + 1 < points.length; i++) total += Math.hypot(points[i + 1]!.x - points[i]!.x, points[i + 1]!.y - points[i]!.y);
+  let left = k * total;
+  for (let i = 0; i + 1 < points.length; i++) {
+    const a = points[i]!, b = points[i + 1]!, d = Math.hypot(b.x - a.x, b.y - a.y);
+    if (left <= d || i + 2 === points.length) { const u = d === 0 ? 1 : Math.min(1, left / d); return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u }; }
+    left -= d;
+  }
+  return { ...points[points.length - 1]! };
 }
 
 // ------------------------------------------------------------ validation
 
 /** Structural problems with a connector set, against the grid it lives on. An empty list is a pass. */
-export function validateTransit(grid: Grid, entrance: Point, connectors: readonly TransitConnector[], mapId: string): string[] {
+export function validateTransit(grid: Grid, entrance: Point, connectors: readonly TransitConnector[], mapId: string, districts?: DistrictModel): string[] {
   const out: string[] = [];
   const at = (m: string) => out.push(`map ${mapId}: ${m}`);
-  const net = createTransitNetwork(grid, connectors);
+  const net = createTransitNetwork(grid, connectors, districts ? { districts } : {});
   const seen = new Set<string>();
   const inGrid = (p: Point) => Number.isInteger(p.x) && Number.isInteger(p.y) && p.x >= 0 && p.y >= 0 && p.x < grid.w && p.y < grid.h;
   const walkable = (p: Point) => inGrid(p) && grid.cost[p.y * grid.w + p.x] !== 0;
@@ -234,8 +304,23 @@ export function validateTransit(grid: Grid, entrance: Point, connectors: readonl
     if (!walkable(c.exit)) at(`connector ${c.id}: exit tile is missing or not walkable`);
     if (!(c.durationMs >= MIN_TRANSIT_MS && c.durationMs <= MAX_TRANSIT_MS)) at(`connector ${c.id}: duration must be ${MIN_TRANSIT_MS}-${MAX_TRANSIT_MS} ms`);
     if (!walkable(c.boarding) || !walkable(c.exit)) continue;
-    if (net.regionOf(c.boarding) === net.regionOf(c.exit)) at(`connector ${c.id}: joins a region to itself`);
-    if (c.fromRegion === c.toRegion) at(`connector ${c.id}: self-loop between ${c.fromRegion} and ${c.toRegion}`);
+    if (c.visual.kind === 'car') {
+      // A car is a link inside one street between two districts that are apart, in the lane for its direction.
+      if (net.regionOf(c.boarding) !== net.regionOf(c.exit)) at(`connector ${c.id}: a car link must join two stops of the same street`);
+      if (!districts) at(`connector ${c.id}: a car link needs the map's district model`);
+      else {
+        const a = districts.of(c.boarding), b = districts.of(c.exit);
+        if (a && b && a === b) at(`connector ${c.id}: both stops lie in the same district`);
+        if (a !== c.visual.from || b !== c.visual.to) at(`connector ${c.id}: stops do not lie in the districts ${c.visual.from} and ${c.visual.to}`);
+        if (a && b && districts.adjacent(a, b)) at(`connector ${c.id}: ${a} and ${b} are neighbours, so the trip is a walk and may not take a car`);
+      }
+      if (!Number.isFinite(c.visual.laneY)) at(`connector ${c.id}: a car needs a lane row`);
+      const east = c.exit.x > c.boarding.x;
+      if (c.visual.lane !== (east ? 'east' : 'west')) at(`connector ${c.id}: the ${c.visual.lane} lane does not match a ${east ? 'east' : 'west'}ward trip`);
+    } else {
+      if (net.regionOf(c.boarding) === net.regionOf(c.exit)) at(`connector ${c.id}: joins a region to itself`);
+      if (c.fromRegion === c.toRegion) at(`connector ${c.id}: self-loop between ${c.fromRegion} and ${c.toRegion}`);
+    }
     if (c.visual.kind === 'shuttle' && !(Number.isFinite(c.visual.control.x) && Number.isFinite(c.visual.control.y))) at(`connector ${c.id}: shuttle route has no valid control point`);
     if (!net.route(entrance, c.boarding)) at(`connector ${c.id}: boarding tile is not reachable from the entrance`);
     if (!net.route(entrance, c.exit)) at(`connector ${c.id}: exit tile is not reachable from the entrance`);

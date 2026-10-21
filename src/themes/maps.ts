@@ -13,7 +13,7 @@ const GREENWOOD_VIEW: MapView = { centerX: 52, centerY: 41, fitW: 98, fitH: 56 }
 const CYBER_VIEW: MapView = { centerX: 42, centerY: 25, fitW: 84, fitH: 50 };
 const ORBITAL_VIEW: MapView = { centerX: 42, centerY: 25, fitW: 84, fitH: 50 };
 
-const LIFT_NOTE = 'Residents ride lifts between floors. The lift is a visual route for a resident already on its way to a real workstation: it is not a separate Hermes lifecycle signal, and nothing is sent to Hermes.';
+const LIFT_NOTE = 'Residents ride lifts between floors, and a car along the street when a station is further than the next tower. A lift or a car is a visual route for a resident already on its way to a real workstation: it is not a separate Hermes lifecycle signal, and nothing is sent to Hermes.';
 const SHUTTLE_NOTE = 'Residents fly shuttles between bodies. The shuttle is a visual route for a resident already on its way to a real workstation: it is not a separate Hermes lifecycle signal, and nothing is sent to Hermes.';
 
 /**
