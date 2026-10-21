@@ -71,7 +71,8 @@ const rideFacts = (page) => page.evaluate(() => {
 });
 
 const worlds = [
-  { id: 'cyber-city', people: 'neon-operatives', kind: 'lift', pack: 'ap-pack-cyber-city', tool: null },
+  // A new resident walks from the gate (Archive district) to the Town hall (Operations Tower): a district further than the next, so its first ride is a street car; lifts are covered by verify-cyber-lift.
+  { id: 'cyber-city', people: 'neon-operatives', kind: 'car', pack: 'ap-pack-cyber-city', tool: null },
   { id: 'orbital-system', people: 'orbital-crew', kind: 'shuttle', pack: 'ap-pack-orbital-system', tool: 'read_file' },
 ];
 const { port } = await town.listen(0);

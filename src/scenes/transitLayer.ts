@@ -1,13 +1,15 @@
 import Phaser from 'phaser';
 import { glow, rect, surface } from '../art/artKit';
+import { paintRoadCar } from '../art/cyberCity';
 import { profileColorFor } from '../art/profileColors';
-import type { Resident, TownSim } from '../sim/town';
+import type { Resident, TownSim, TransitRide } from '../sim/town';
 import type { TownMap } from '../world/map';
+import { CAR_SIZE, LIFT_CABIN, PASSENGER_FLOOR_GAP, PASSENGER_H, liftOccluderRects, liftPassengerBox, slabBehindRider, type LiftOccluderRect } from '../world/cyberCity';
 import { riderVisible, transitPhase, LIFT_CAR_BASE_OFFSET, type TransitConnector } from '../world/transit';
-import { LIFT_DEPTHS, TRANSIT_DEPTH } from './depthBands';
+import { LIFT_DEPTHS, ROAD_RIDE_DEPTHS, TRANSIT_DEPTH } from './depthBands';
 
 /**
- * Draws the lifts and shuttles that residents ride.
+ * Draws the lifts, cars and shuttles that residents ride.
  *
  * A ride is a visual route segment for a resident that is already moving to a real workstation. This layer reads the
  * simulator and never writes to it: it creates no resident, no state, no event and no request. Each rider gets one car
@@ -16,8 +18,13 @@ import { LIFT_DEPTHS, TRANSIT_DEPTH } from './depthBands';
  * ride ends, and everything is destroyed with the scene.
  *
  * Depth: lift cars ride in the shaft band (LIFT_DEPTHS), behind the deck slabs the scene draws over them and below every
- * resident; shuttles sit at {@link TRANSIT_DEPTH}. All of it is far below every name tag, bubble and emote (see
- * depthBands.ts), and beneath the grade, fog and rain layers.
+ * resident; road cars ride in the road band (ROAD_RIDE_DEPTHS) above the road and below every resident; shuttles sit at
+ * {@link TRANSIT_DEPTH}. All of it is far below every name tag, bubble and emote (see depthBands.ts), and beneath the
+ * grade, fog and rain layers.
+ *
+ * One structural exception, and only one: while a resident is inside a lift cabin, that resident's OWN name tag, bubble
+ * and emote ride with the passenger and are hidden while the passenger is physically behind a solid deck slab (see
+ * {@link TransitLayer.riderOverlay}). No other resident's label, and no decorative layer, is ever affected.
  */
 export { TRANSIT_DEPTH };
 const MAX_RIDES = 16;
@@ -38,13 +45,31 @@ interface RideVisual {
 
 export interface RideSnapshot {
   rider: string;
-  kind: 'lift' | 'shuttle';
+  kind: 'lift' | 'shuttle' | 'car';
   x: number; y: number;
   depth: number;
   phase: 'board' | 'ride' | 'exit';
   riderHidden: boolean;
   label: string;
   reduced: boolean;
+  /** Cars only: the lane this car is in, and the world-pixel row of its centre line. */
+  lane?: 'east' | 'west';
+  laneY?: number;
+}
+
+/**
+ * Where a rider's own labels go while the rider is inside a lift cabin: anchored to the passenger, not to the tile the
+ * resident's position happens to be on (which is a deck line below the cabin). `occluded` is true while the passenger is
+ * physically behind a solid deck slab of its own tower; then the name, bubble and emote are hidden with the rider.
+ */
+export interface RiderOverlay {
+  x: number;
+  /** Just above the passenger's head: the name tag sits on this line, inside the cabin. */
+  nameBottom: number;
+  /** Where the bubble and emote bottoms are: just above the cabin. */
+  bubbleBottom: number;
+  occluded: boolean;
+  slab: LiftOccluderRect | null;
 }
 
 export function paintTransitTextures(scene: Phaser.Scene): void {
@@ -66,6 +91,8 @@ export function paintTransitTextures(scene: Phaser.Scene): void {
     ctx.fillRect(1, 6, 6, 7);
     add('transit-passenger', s.canvas);
   }
+  // The road car: a larger, rounded cab with a lit canopy. `open` lights the doors and the interior.
+  for (const open of [false, true]) add(open ? 'transit-cab-open' : 'transit-cab', paintRoadCar(open));
   {
     const s = surface(30, 14); const { ctx } = s;
     glow(ctx, 3, 7, 10, '#ffb347', 0.9);
@@ -93,14 +120,28 @@ function regionName(map: TownMap, id: string): string {
   return floor ? `F${floor[1]}` : id;
 }
 
+/**
+ * The cabin's placement for a lift ride, from simulator state alone: its centre x and the world-pixel row of its floor.
+ * The cabin glides with the resident's own interpolated position; under reduced motion it stands at the boarding floor,
+ * then at the destination floor.
+ */
+export function liftCabinPlacement(r: Pick<Resident, 'x' | 'y'>, ride: TransitRide, reduced: boolean): { x: number; floorY: number; ph: ReturnType<typeof transitPhase> } {
+  const ph = transitPhase(ride.elapsed, ride.duration);
+  const atDestination = reduced ? ph.t >= 0.5 : true;
+  const y = reduced ? (atDestination ? ride.to.y : ride.from.y) : r.y;
+  return { x: r.x, floorY: y + LIFT_CAR_BASE_OFFSET, ph };
+}
+
 export class TransitLayer {
   private readonly pool: RideVisual[] = [];
   private readonly active = new Map<string, RideVisual>();
   private clock = 0;
   private reduced = false;
+  private readonly slabs: LiftOccluderRect[];
 
   constructor(private readonly scene: Phaser.Scene, private readonly map: TownMap, private readonly sim: TownSim) {
     paintTransitTextures(scene);
+    this.slabs = map.skin === 'cyber-city' ? liftOccluderRects() : [];
   }
 
   setReducedMotion(reduced: boolean): void { this.reduced = reduced; }
@@ -138,6 +179,22 @@ export class TransitLayer {
     return !riderVisible(r.transit.elapsed, r.transit.duration);
   }
 
+  /**
+   * The rider's own overlay anchor and floor-occlusion state while it is a passenger inside a lift cabin; null at any
+   * other time (walking, at a landing with the doors working, in a car or a craft). Computed from simulator state alone,
+   * with the same geometry `drawLift` uses, so a frame never disagrees with itself.
+   */
+  riderOverlay(r: Resident): RiderOverlay | null {
+    const ride = r.transit;
+    if (!ride || !this.active.has(r.id)) return null;
+    const c = this.map.transit?.byId(ride.connectorId);
+    if (!c || c.visual.kind !== 'lift') return null;
+    if (riderVisible(ride.elapsed, ride.duration)) return null;
+    const { x, floorY } = liftCabinPlacement(r, ride, this.reduced);
+    const slab = slabBehindRider(c.visual.tower, liftPassengerBox(x, floorY), this.slabs);
+    return { x, nameBottom: floorY - PASSENGER_FLOOR_GAP - PASSENGER_H - 1, bubbleBottom: floorY - LIFT_CABIN.h - 2, occluded: slab !== null, slab };
+  }
+
   update(dt: number): void {
     this.clock += dt;
     const net = this.map.transit;
@@ -152,7 +209,7 @@ export class TransitLayer {
       if (!v) v = this.acquire(r.id) ?? undefined;
       if (!v) continue;
       seen.add(r.id);
-      if (connector.kind === 'lift') this.drawLift(v, r, connector); else this.drawShuttle(v, r, connector);
+      if (connector.kind === 'lift') this.drawLift(v, r, connector); else if (connector.kind === 'car') this.drawCar(v, r, connector); else this.drawShuttle(v, r, connector);
     }
     for (const v of [...this.active.values()]) if (v.rider && !seen.has(v.rider)) this.release(v);
   }
@@ -168,15 +225,11 @@ export class TransitLayer {
 
   private drawLift(v: RideVisual, r: Resident, c: TransitConnector): void {
     const ride = r.transit!;
-    const ph = transitPhase(ride.elapsed, ride.duration);
     const visual = c.visual.kind === 'lift' ? c.visual : null;
     const floorLabel = (n: number) => (n === 0 ? 'G' : `F${n}`);
     const reduced = this.reduced;
     // Reduced motion: no gliding. The car stands at the boarding floor, then at the destination floor, with a short fade between.
-    const atDestination = reduced ? ph.t >= 0.5 : true;
-    const y = reduced ? (atDestination ? ride.to.y : ride.from.y) : r.y;
-    const x = r.x;
-    const bottom = y + LIFT_CAR_BASE_OFFSET;
+    const { x, floorY: bottom, ph } = liftCabinPlacement(r, ride, reduced);
     const fade = reduced ? (ph.phase === 'ride' ? 0.35 + 0.65 * Math.abs(ph.t - 0.5) * 2 : 1) : 1;
     v.connectorId = c.id;
     // The cabin rides in the shaft, behind the deck slabs: shaft-band depths, never the rider's y-sorted depth.
@@ -189,6 +242,33 @@ export class TransitLayer {
     v.passenger.setScale(0.5).setPosition(x, bottom - 4).setDepth(LIFT_DEPTHS.passenger).setAlpha(1).setVisible(inside);
     if (visual) this.setLabel(v, reduced ? `${floorLabel(visual.floorFrom)} → ${floorLabel(visual.floorTo)}` : `${visual.floorTo > visual.floorFrom ? '▲' : '▼'} ${floorLabel(visual.floorTo)}`);
     v.label.setPosition(x, bottom - 72).setDepth(LIFT_DEPTHS.indicator).setVisible(true);
+    for (const p of v.puffs) p.setVisible(false);
+  }
+
+  /**
+   * A road car: fixed to the centre line of its directional lane, so it never crosses the divider. It waits at the curb
+   * stop with its doors lit, drives along the lane at the resident's interpolated x, and pulls up at the far stop.
+   * Reduced motion: no driving; the car stands at the pickup stop, then at the drop-off stop, with a short fade between.
+   */
+  private drawCar(v: RideVisual, r: Resident, c: TransitConnector): void {
+    if (c.visual.kind !== 'car') return;
+    const ride = r.transit!;
+    const ph = transitPhase(ride.elapsed, ride.duration);
+    const reduced = this.reduced;
+    const x = reduced ? (ph.t >= 0.5 ? ride.to.x : ride.from.x) : r.x;
+    const fade = reduced ? (ph.phase === 'ride' ? 0.35 + 0.65 * Math.abs(ph.t - 0.5) * 2 : 1) : 1;
+    const y = c.visual.laneY + CAR_SIZE.h / 2;
+    v.connectorId = c.id;
+    // facing: an eastbound car looks right, a westbound car looks left
+    const flip = c.visual.lane === 'west';
+    v.body.setTexture('transit-cab').setOrigin(0.5, 1).setRotation(0).setScale(0.5).setFlipX(flip).setPosition(x, y).setDepth(ROAD_RIDE_DEPTHS.car).setAlpha(fade).setVisible(true);
+    v.open.setTexture('transit-cab-open').setOrigin(0.5, 1).clearTint().setBlendMode(Phaser.BlendModes.NORMAL).setScale(0.5).setFlipX(flip)
+      .setPosition(x, y).setDepth(ROAD_RIDE_DEPTHS.doors).setAlpha(Math.min(1, ph.open * 1.4) * fade).setVisible(ph.open > 0.05);
+    const inside = !riderVisible(ride.elapsed, ride.duration);
+    this.tint(v, r);
+    v.passenger.setScale(0.5).setFlipX(false).setPosition(x + (flip ? -2 : 2), y - 6).setDepth(ROAD_RIDE_DEPTHS.passenger).setAlpha(fade).setVisible(inside);
+    this.setLabel(v, reduced ? `Car → ${c.visual.destination}` : `→ ${c.visual.destination}`);
+    v.label.setPosition(x, y - CAR_SIZE.h - 2).setDepth(ROAD_RIDE_DEPTHS.indicator).setVisible(true);
     for (const p of v.puffs) p.setVisible(false);
   }
 
@@ -241,7 +321,7 @@ export class TransitLayer {
       const ride = r?.transit;
       const c = ride ? this.map.transit?.byId(ride.connectorId) : null;
       if (!r || !ride || !c) continue;
-      out.push({ rider: r.id, kind: c.kind, x: v.body.x, y: v.body.y, depth: v.body.depth, phase: transitPhase(ride.elapsed, ride.duration).phase, riderHidden: this.hidesRider(r), label: v.labelText, reduced: this.reduced });
+      out.push({ rider: r.id, kind: c.kind, x: v.body.x, y: v.body.y, depth: v.body.depth, phase: transitPhase(ride.elapsed, ride.duration).phase, riderHidden: this.hidesRider(r), label: v.labelText, reduced: this.reduced, ...(c.visual.kind === 'car' ? { lane: c.visual.lane, laneY: c.visual.laneY } : {}) });
     }
     return out;
   }

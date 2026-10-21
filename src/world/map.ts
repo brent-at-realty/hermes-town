@@ -90,7 +90,16 @@ export interface TownMap {
   regions?: WorldRegion[];
   /** A world with no air. Its "rain" setting is drawn as a field of drifting solar particles, never as rain. */
   vacuum?: boolean;
+  /**
+   * Authored watch posts where keepers (scheduled jobs) stand between runs. When absent, keepers stand beside the
+   * lamps. A map that authors posts also authors the zones no post may stand in; `validateMap` checks both.
+   */
+  posts?: Point[];
+  postExclusions?: ExclusionRect[];
 }
+
+/** A tile rectangle that a watch post (or any other fixture) must stay out of: a lift shaft, a lift approach, a car stop. */
+export interface ExclusionRect { id: string; kind: 'shaft' | 'lift-approach' | 'car-stop'; x: number; y: number; w: number; h: number }
 
 const inb = (x: number, y: number) => x >= 0 && y >= 0 && x < LOCAL_W && y < LOCAL_H;
 

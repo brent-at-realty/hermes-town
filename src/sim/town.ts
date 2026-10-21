@@ -178,6 +178,8 @@ export class TownSim {
       const spot = nearestWalkable(map.grid, { x: lamp.x + 1, y: lamp.y + 1 }, 2);
       if (spot) this.posts.push(spot);
     }
+    // A world that authors its watch posts uses exactly those; every other map keeps the lamp posts above.
+    if (map.posts && map.posts.length > 0) this.posts = map.posts.map((p) => ({ ...p }));
   }
 
   /** The stall a skill works from, assigning the least recently used one on first sight. */

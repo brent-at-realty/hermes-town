@@ -22,6 +22,7 @@ import type { Building, TownMap } from '../world/map';
 import { applyPeopleKit } from '../themes/people';
 import type { ResolvedAppearance } from '../themes/resolve';
 import type { MapView } from '../themes/types';
+import { clampZoom, zoomFloor } from '../world/zoomFloor';
 import { EFFECT_DEPTHS, LIFECYCLE_DEPTHS, LIFT_DEPTHS, SIGN_DEPTH, STALL_SIGN_DEPTH } from './depthBands';
 
 const ZOOMS = [1, 1.5, 2, 3, 4, 5];
@@ -56,6 +57,8 @@ interface ResidentView {
   emote: Phaser.GameObjects.Image;
   key: string;
   striking: boolean;
+  /** True while this resident's own name, bubble and emote are withheld because it is behind a solid lift deck slab. */
+  overlayHidden: boolean;
 }
 
 interface BuildingView {
@@ -132,6 +135,16 @@ export class TownScene extends Phaser.Scene {
   /** The solid deck slabs across the lift shafts (Cyber City): drawn over the lift cabins, under every resident. */
   liftOccluders: Phaser.GameObjects.Image[] = [];
   private ambient: Ambient | null = null;
+  /**
+   * Whether a lift rider's own name, bubble and emote are withheld while the rider is behind a solid deck slab. On in
+   * every build; verification switches it off to prove its measurement fails without the occlusion.
+   */
+  riderOverlayOcclusion = true;
+  /**
+   * Whether the camera is held at or above the map's zoom floor. On in every build; verification switches it off to
+   * prove its measurement fails when the camera is lowered past the floor.
+   */
+  enforceZoomFloor = true;
   /** One reusable image for stamping glows into render textures. */
   private stamp!: Phaser.GameObjects.Image;
   private frameParity = 0;
@@ -310,9 +323,9 @@ export class TownScene extends Phaser.Scene {
     const cam = this.cameras.main;
     cam.setBounds(0, 0, MW * TILE, MH * TILE);
     cam.setBackgroundColor(this.app.ui.canvasBackground);
-    cam.setZoom(ZOOMS[this.zoomIndex]!);
+    cam.setZoom(this.clampZoom(ZOOMS[this.zoomIndex]!));
     cam.setRoundPixels(true);
-    this.scale.on('resize', () => this.recenter());
+    this.scale.on('resize', () => { this.holdZoomFloor(); this.recenter(); });
     this.recenter();
     for (const key of Object.keys(REFERENCE_ATLASES)) tex.remove(`reference-${key}`);
     this.created = true;
@@ -346,11 +359,40 @@ export class TownScene extends Phaser.Scene {
     this.input.on('wheel', (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
       this.userMoved = true;
       this.setFollow(false);
-      const next = dy < 0 ? ZOOMS.find(z => z > cam.zoom + 0.01) ?? ZOOMS[ZOOMS.length - 1]! : [...ZOOMS].reverse().find(z => z < cam.zoom - 0.01) ?? ZOOMS[0]!;
-      this.zoomIndex = ZOOMS.indexOf(next);
+      // Zoom steps: the map's floor first, then every fixed step above it. Zooming out stops at the floor.
+      const floor = this.zoomFloor();
+      const steps = [floor, ...ZOOMS.filter((z) => z > floor + 0.01)];
+      const next = dy < 0 ? steps.find((z) => z > cam.zoom + 0.01) ?? steps[steps.length - 1]! : [...steps].reverse().find((z) => z < cam.zoom - 0.01) ?? steps[0]!;
+      this.zoomIndex = Math.max(0, ZOOMS.indexOf(next));
       this.tweens.killTweensOf(cam);
-      this.tweens.add({ targets: cam, zoom: ZOOMS[this.zoomIndex]!, duration: 180, ease: 'Quad.easeOut' });
+      this.tweens.add({ targets: cam, zoom: this.clampZoom(next), duration: 180, ease: 'Quad.easeOut' });
     });
+  }
+
+  // ------------------------------------------------------------------ zoom floor
+
+  /**
+   * The smallest zoom that does not show space beyond the authored world: the zoom at which the world just covers the
+   * viewport on its tighter axis. It depends on the viewport and on this map's size, so it is recomputed on every
+   * call and every map and window size has its own. Every way of zooming (wheel, buttons, follow, tweens, resize)
+   * is held at or above it.
+   */
+  zoomFloor(): number {
+    return zoomFloor(this.scale.width, this.scale.height, this.mapW * TILE, this.mapH * TILE);
+  }
+
+  private clampZoom(z: number): number {
+    return this.enforceZoomFloor ? clampZoom(z, this.zoomFloor()) : z;
+  }
+
+  /** Raise a camera that has fallen below the floor (a resize, a tween that started before one) without moving what it looks at. */
+  private holdZoomFloor(): void {
+    if (!this.enforceZoomFloor || !this.created) return;
+    const cam = this.cameras.main, floor = this.zoomFloor();
+    if (cam.zoom >= floor - 1e-6) return;
+    const c = { x: cam.midPoint.x, y: cam.midPoint.y };
+    cam.setZoom(floor);
+    cam.centerOn(c.x, c.y);
   }
 
   private shadow(img: Phaser.GameObjects.Image, alpha: number): void {
@@ -564,7 +606,7 @@ export class TownScene extends Phaser.Scene {
     const v = this.opts.view;
     this.tweens.killTweensOf(cam);
     cam.panEffect.reset();
-    cam.setZoom(Math.min(cam.width / (v.fitW * TILE), cam.height / (v.fitH * TILE)));
+    cam.setZoom(this.clampZoom(Math.min(cam.width / (v.fitW * TILE), cam.height / (v.fitH * TILE))));
     cam.centerOn(v.centerX * TILE, v.centerY * TILE);
   }
 
@@ -607,7 +649,7 @@ export class TownScene extends Phaser.Scene {
     this.directorTarget = target.id;
     const cam = this.cameras.main;
     this.tweens.killTweensOf(cam);
-    if (cam.zoom < 2.5) this.tweens.add({ targets: cam, zoom: 3, duration: 700, ease: 'Quad.easeInOut' });
+    if (cam.zoom < 2.5) this.tweens.add({ targets: cam, zoom: this.clampZoom(3), duration: 700, ease: 'Quad.easeInOut' });
     cam.startFollow(v.sprite, true, 0.04, 0.04);
   }
 
@@ -619,7 +661,7 @@ export class TownScene extends Phaser.Scene {
     cam.stopFollow();
     if (!on) return;
     const v = this.selected ? this.views.get(this.selected) : null;
-    if (v) { this.tweens.killTweensOf(cam); cam.panEffect.reset(); cam.setZoom(3); cam.startFollow(v.sprite, true, 0.08, 0.08); }
+    if (v) { this.tweens.killTweensOf(cam); cam.panEffect.reset(); cam.setZoom(this.clampZoom(3)); cam.startFollow(v.sprite, true, 0.08, 0.08); }
   }
 
   isFollowing(): boolean { return this.following; }
@@ -632,7 +674,7 @@ export class TownScene extends Phaser.Scene {
     this.directorTarget = null;
     this.setFollow(false);
     this.tweens.killTweensOf(this.cameras.main);
-    this.tweens.add({ targets: this.cameras.main, zoom: 2.5, duration: 500, ease: 'Quad.easeInOut' });
+    this.tweens.add({ targets: this.cameras.main, zoom: this.clampZoom(2.5), duration: 500, ease: 'Quad.easeInOut' });
     this.cameras.main.pan((b.x + b.w / 2) * TILE, (b.y + b.h) * TILE + 16, 500, 'Quad.easeInOut');
   }
 
@@ -671,8 +713,8 @@ export class TownScene extends Phaser.Scene {
       }
       if (!v.sprite.visible) { v.sprite.setVisible(true); v.shadow.setVisible(true); }
       this.syncView(v, r);
-      // name tags are a budget: past a crowd, or zoomed out, only the selected one keeps its tag
-      v.name.setVisible(this.selected === r.id || (zoom >= 2 && crowd <= 80 && !(r.kind === 'runner' && zoom < 3)));
+      // name tags are a budget: past a crowd, or zoomed out, only the selected one keeps its tag. A rider behind a solid lift slab withholds its own.
+      v.name.setVisible(!v.overlayHidden && (this.selected === r.id || (zoom >= 2 && crowd <= 80 && !(r.kind === 'runner' && zoom < 3))));
     }
     for (const [id, v] of this.views) {
       if (seen.has(id)) continue;
@@ -695,6 +737,7 @@ export class TownScene extends Phaser.Scene {
     }
 
     this.updateStallLabels();
+    this.holdZoomFloor();
     if (this.transit) { this.transit.setReducedMotion(this.app.environment.reducedMotion); this.transit.update(dt); }
     this.ambient?.update(dt);
     this.updateWind(dt);
@@ -788,7 +831,7 @@ export class TownScene extends Phaser.Scene {
     const bubble = this.add.text(r.x, r.y - 30, '', { fontFamily: 'monospace', fontSize: '6px', color: scene.bubbleText }).setOrigin(0.5, 1).setResolution(6);
     const bubbleBg = this.add.rectangle(r.x, r.y - 30, 10, 8, scene.bubbleFill).setOrigin(0.5, 1).setStrokeStyle(0.5, scene.bubbleStroke);
     const emote = this.add.image(r.x + 9, r.y - 30, 'emote-ok').setOrigin(0.5, 1).setVisible(false);
-    const v: ResidentView = { sprite, shadow, name, bubble, bubbleBg, emote, key, striking: false };
+    const v: ResidentView = { sprite, shadow, name, bubble, bubbleBg, emote, key, striking: false, overlayHidden: false };
     this.views.set(r.id, v);
     return v;
   }
@@ -797,7 +840,12 @@ export class TownScene extends Phaser.Scene {
     const x = Math.round(r.x), y = Math.round(r.y + 7);
     v.sprite.setPosition(x, y).setDepth(y);
     v.shadow.setPosition(x, y - 1).setDepth(y - 1);
-    v.name.setPosition(x, y + 1).setDepth(LIFECYCLE_DEPTHS.name);
+    // A passenger inside a lift cabin carries its own labels with it, and withholds them while it is behind a solid slab.
+    const ov = this.transit?.riderOverlay(r) ?? null;
+    const hide = ov !== null && ov.occluded && this.riderOverlayOcclusion;
+    v.overlayHidden = hide;
+    if (ov) v.name.setOrigin(0.5, 1).setPosition(Math.round(ov.x), ov.nameBottom).setDepth(LIFECYCLE_DEPTHS.name);
+    else v.name.setOrigin(0.5, 0).setPosition(x, y + 1).setDepth(LIFECYCLE_DEPTHS.name);
     const alpha = r.state === 'resting' ? 0.85 : r.fade;
     // inside a lift or shuttle the resident is drawn as the passenger of its car or craft, never as a second figure
     const inside = this.transit?.hidesRider(r) ?? false;
@@ -816,15 +864,16 @@ export class TownScene extends Phaser.Scene {
     v.striking = pose.striking;
     const text = r.bubble && r.fade > 0.9 && r.state !== 'resting' ? r.bubble : '';
     if (v.bubble.text !== text) v.bubble.setText(text);
-    const show = text.length > 0;
+    const show = text.length > 0 && !hide;
     v.bubble.setVisible(show); v.bubbleBg.setVisible(show);
+    const ax = ov ? Math.round(ov.x) : x;
+    const top = ov ? ov.bubbleBottom : y - FRAME_H - 2;
     if (show) {
-      const by = y - FRAME_H - 2;
-      v.bubble.setPosition(x, by - 1).setDepth(LIFECYCLE_DEPTHS.bubble);
-      v.bubbleBg.setPosition(x, by).setSize(v.bubble.width + 4, v.bubble.height + 2).setDepth(LIFECYCLE_DEPTHS.bubbleBg);
+      v.bubble.setPosition(ax, top - 1).setDepth(LIFECYCLE_DEPTHS.bubble);
+      v.bubbleBg.setPosition(ax, top).setSize(v.bubble.width + 4, v.bubble.height + 2).setDepth(LIFECYCLE_DEPTHS.bubbleBg);
     }
-    if (r.emote) {
-      v.emote.setTexture(`emote-${r.emote}`).setVisible(true).setPosition(x + (show ? v.bubbleBg.width / 2 + 7 : 0), y - FRAME_H - 3 - Math.sin(r.clock * 6)).setDepth(LIFECYCLE_DEPTHS.emote);
+    if (r.emote && !hide) {
+      v.emote.setTexture(`emote-${r.emote}`).setVisible(true).setPosition(ax + (show ? v.bubbleBg.width / 2 + 7 : 0), top - 1 - Math.sin(r.clock * 6)).setDepth(LIFECYCLE_DEPTHS.emote);
     } else {
       v.emote.setVisible(false);
     }
