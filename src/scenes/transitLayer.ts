@@ -3,8 +3,8 @@ import { glow, rect, surface } from '../art/artKit';
 import { profileColorFor } from '../art/profileColors';
 import type { Resident, TownSim } from '../sim/town';
 import type { TownMap } from '../world/map';
-import { riderVisible, transitPhase, type TransitConnector } from '../world/transit';
-import { TRANSIT_DEPTH } from './depthBands';
+import { riderVisible, transitPhase, LIFT_CAR_BASE_OFFSET, type TransitConnector } from '../world/transit';
+import { LIFT_DEPTHS, TRANSIT_DEPTH } from './depthBands';
 
 /**
  * Draws the lifts and shuttles that residents ride.
@@ -15,8 +15,9 @@ import { TRANSIT_DEPTH } from './depthBands';
  * `hidesRider`), so a resident is never in two places. Visuals come from a small pool and are returned to it when the
  * ride ends, and everything is destroyed with the scene.
  *
- * Depth: lift cars follow the rider's own depth, shuttles sit at {@link TRANSIT_DEPTH}. Both are far below every name
- * tag, bubble and emote (see depthBands.ts), and beneath the grade, fog and rain layers.
+ * Depth: lift cars ride in the shaft band (LIFT_DEPTHS), behind the deck slabs the scene draws over them and below every
+ * resident; shuttles sit at {@link TRANSIT_DEPTH}. All of it is far below every name tag, bubble and emote (see
+ * depthBands.ts), and beneath the grade, fog and rain layers.
  */
 export { TRANSIT_DEPTH };
 const MAX_RIDES = 16;
@@ -175,18 +176,19 @@ export class TransitLayer {
     const atDestination = reduced ? ph.t >= 0.5 : true;
     const y = reduced ? (atDestination ? ride.to.y : ride.from.y) : r.y;
     const x = r.x;
-    const bottom = y + 9;
+    const bottom = y + LIFT_CAR_BASE_OFFSET;
     const fade = reduced ? (ph.phase === 'ride' ? 0.35 + 0.65 * Math.abs(ph.t - 0.5) * 2 : 1) : 1;
     v.connectorId = c.id;
-    v.body.setTexture('transit-car').setOrigin(0.5, 1).setRotation(0).setScale(0.5).setPosition(x, bottom).setDepth(bottom + 2).setAlpha(fade).setVisible(true);
+    // The cabin rides in the shaft, behind the deck slabs: shaft-band depths, never the rider's y-sorted depth.
+    v.body.setTexture('transit-car').setOrigin(0.5, 1).setRotation(0).setScale(0.5).setPosition(x, bottom).setDepth(LIFT_DEPTHS.car).setAlpha(fade).setVisible(true);
     const showOpen = ph.open > 0.05;
     v.open.setTexture('transit-car-open').setOrigin(0.5, 1).clearTint().setBlendMode(Phaser.BlendModes.NORMAL).setScale(0.5)
-      .setPosition(x, bottom).setDepth(bottom + 2.1).setAlpha(Math.min(1, ph.open * 1.4) * fade).setVisible(showOpen);
+      .setPosition(x, bottom).setDepth(LIFT_DEPTHS.doors).setAlpha(Math.min(1, ph.open * 1.4) * fade).setVisible(showOpen);
     const inside = !riderVisible(ride.elapsed, ride.duration);
     this.tint(v, r);
-    v.passenger.setScale(0.5).setPosition(x, bottom - 4).setDepth(bottom + 2.2).setAlpha(1).setVisible(inside);
+    v.passenger.setScale(0.5).setPosition(x, bottom - 4).setDepth(LIFT_DEPTHS.passenger).setAlpha(1).setVisible(inside);
     if (visual) this.setLabel(v, reduced ? `${floorLabel(visual.floorFrom)} → ${floorLabel(visual.floorTo)}` : `${visual.floorTo > visual.floorFrom ? '▲' : '▼'} ${floorLabel(visual.floorTo)}`);
-    v.label.setPosition(x, bottom - 72).setDepth(bottom + 2.3).setVisible(true);
+    v.label.setPosition(x, bottom - 72).setDepth(LIFT_DEPTHS.indicator).setVisible(true);
     for (const p of v.puffs) p.setVisible(false);
   }
 

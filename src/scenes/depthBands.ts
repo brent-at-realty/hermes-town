@@ -3,7 +3,11 @@
  * a lifecycle indicator by accident, and so the browser verification audits the same numbers the scene uses.
  *
  *   world       terrain, buildings, props, residents: y-sorted, always below WORLD_MAX
- *   transport   shuttle craft; lift cars sort with their rider inside the world band
+ *   shaft       lift cabins, their passengers and floor indicators ride in the shaft, which is BEHIND the deck slabs:
+ *               they sit below every y-sorted resident and prop, and below the deck occluders that follow
+ *   occluders   the solid deck slabs of a lift tower, drawn over the shaft band and under every resident, so a cabin
+ *               passing a floor is hidden by the slab and shows only in the openings between decks
+ *   transport   shuttle craft
  *   effects     every decorative post-process and ambient layer: colour grade, wash, haze, motes, fog, rain,
  *               work sparks, cloud shadow, night. Strictly below SIGN_DEPTH.
  *   signs       building and stall labels
@@ -13,6 +17,8 @@
  */
 export const WORLD_MAX = 90000;
 export const TRANSIT_DEPTH = 96000;
+/** Lift shaft band. All of it is above terrain (-11..-2) and below every resident and prop (their depth is their y). */
+export const LIFT_DEPTHS = { car: -0.9, doors: -0.89, passenger: -0.88, indicator: -0.87, occluder: -0.8 } as const;
 export const EFFECT_DEPTHS = {
   grade: 97500,
   gradeAdd: 97501,

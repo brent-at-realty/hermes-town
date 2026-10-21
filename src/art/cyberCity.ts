@@ -1,7 +1,7 @@
 import { TILE } from './tiles';
 import type { Building, TownMap } from '../world/map';
-import { CYBER_H, CYBER_TOWERS, CYBER_W, STREET_YB, TOWER_W, floorBase, vestibule, type CyberTower } from '../world/cyberCity';
-import { glow, neon, neonText, rect, rng, surface, vgrad, type Surface } from './artKit';
+import { CYBER_H, CYBER_TOWERS, CYBER_W, LIFT_SHAFT_HALF_W, STREET_YB, TOWER_W, deckTopPx, floorBase, liftOccluderRects, vestibule, type CyberTower } from '../world/cyberCity';
+import { SCALE, glow, neon, neonText, rect, rng, surface, vgrad, type Surface } from './artKit';
 import { shade } from './painter';
 
 /**
@@ -30,7 +30,7 @@ export function cyberAnchors(): CyberAnchors {
     signs.push({ x: (t.x0 + 3) * TILE, y: top - 30, w: (TOWER_W - 6) * TILE, h: 12, color: t.accent });
     beacons.push({ x: (t.x0 + 9) * TILE + 8, y: top - 58, color: '#ff4a6a' });
   }
-  signs.push({ x: 23 * TILE, y: 39 * TILE, w: 17 * TILE, h: 10, color: CYBER.magenta });
+  signs.push({ x: 26 * TILE, y: 39 * TILE, w: 14 * TILE, h: 10, color: CYBER.magenta });
   return { signs, beacons, road: { y0: (STREET_YB + 1) * TILE + 4, y1: (STREET_YB + 4) * TILE }, skyLane: { y: 3 * TILE }, windows: [] };
 }
 
@@ -72,6 +72,7 @@ export function paintCyberCity(map: TownMap): HTMLCanvasElement {
   for (const t of CYBER_TOWERS) paintTower(ctx, t);
   paintStreet(ctx);
   paintArcade(ctx);
+  paintLiftLandings(ctx);
   paintCables(ctx);
   void map;
   return canvas;
@@ -112,9 +113,6 @@ function paintTower(ctx: CanvasRenderingContext2D, t: CyberTower): void {
   neon(ctx, L + 1, top, 2, bottom - top, shade(t.accent, 0.8)); neon(ctx, L + Wd - 3, top, 2, bottom - top, shade(t.accent, 0.8));
   rect(ctx, L + TILE - 2, top, 2, bottom - top, 'rgba(0,0,0,0.5)'); rect(ctx, L + Wd - TILE, top, 2, bottom - top, 'rgba(0,0,0,0.5)');
   for (const f of floors) paintFloor(ctx, t, f);
-  // the lift shaft rails, drawn after the floors so they run through every floor
-  const sx = (t.x0 + 2) * TILE + TILE / 2 - 22;
-  for (const dx of [0, 41]) { rect(ctx, sx + dx, top + 4, 3, bottom - top - 8, '#2a3560'); rect(ctx, sx + dx, top + 4, 1, bottom - top - 8, 'rgba(160,190,255,0.35)'); }
 }
 
 function paintFloor(ctx: CanvasRenderingContext2D, t: CyberTower, floor: number): void {
@@ -132,18 +130,56 @@ function paintFloor(ctx: CanvasRenderingContext2D, t: CyberTower, floor: number)
   rect(ctx, L, deckTop + TILE, iw, 1, 'rgba(110,140,220,0.1)');
   rect(ctx, L - TILE, deckBottom - 5, iw + 2 * TILE, 5, '#222c55');
   neon(ctx, L - TILE, deckBottom - 5, iw + 2 * TILE, 1.4, shade(t.accent, 0.7));
-  // the lift vestibule: shaft backing, door frame, floor plate and an indicator
-  // The doorway stands exactly where the car stops: the resident boards at the tile, the car is centred on it and its
-  // bottom edge is one pixel below the tile row's baseline (see TransitLayer).
+  // The lift shaft opening: backing, rails, door frame and an indicator. The shaft lies BEHIND the deck slabs. Its opening
+  // is the wall between this deck's back edge and the slab of the floor above; the slab itself is solid, so the rails and
+  // the backing stop at the deck's back edge and the cabin (a sprite in the shaft band) shows only in this opening.
+  // The cabin's floor stands exactly on the deck's back edge (see LIFT_CAR_BASE_OFFSET), so it is clear of the deck art.
   const cx = vestibule(t, floor).x * TILE + TILE / 2;
-  const doorTop = yb * TILE - 52, doorBottom = yb * TILE + 1;
-  rect(ctx, cx - 20, roomTop + 6, 40, deckTop - roomTop - 6 + TILE, '#0a0e1e');
+  const doorTop = deckTop - 52, doorBottom = deckTop;
+  rect(ctx, cx - 20, roomTop + 6, 40, deckTop - roomTop - 6, '#0a0e1e');
   rect(ctx, cx - 20, roomTop + 6, 40, 2, '#2a3560');
+  for (const dx of [-LIFT_SHAFT_HALF_W, LIFT_SHAFT_HALF_W - 3]) { rect(ctx, cx + dx, roomTop + 6, 3, deckTop - roomTop - 6, '#2a3560'); rect(ctx, cx + dx, roomTop + 6, 1, deckTop - roomTop - 6, 'rgba(160,190,255,0.35)'); }
   rect(ctx, cx - 17, doorTop - 2, 34, doorBottom - doorTop + 2, '#1b2547');
   rect(ctx, cx - 15, doorTop, 14.4, doorBottom - doorTop, '#26326a'); rect(ctx, cx + 0.6, doorTop, 14.4, doorBottom - doorTop, '#26326a');
   rect(ctx, cx - 0.5, doorTop, 1, doorBottom - doorTop, '#0a0e1e');
   neon(ctx, cx - 17, doorTop - 3, 34, 1.5, t.accent);
   neonText(ctx, floor === 0 ? 'G' : `F${floor}`, cx, doorTop - 10, t.accent, 7);
+}
+
+/**
+ * The lift landing of every floor, drawn after the street so the sidewalk cannot paint over it: the door sill on the
+ * deck's back edge and a lit landing plate on the deck at the vestibule tile, so a resident visibly walks the ordinary
+ * deck line up to the threshold. Floor art only; the cabin itself is a sprite.
+ */
+function paintLiftLandings(ctx: CanvasRenderingContext2D): void {
+  for (const t of CYBER_TOWERS) for (const floor of [0, ...t.floors.map((f) => f.floor)]) {
+    const cx = vestibule(t, floor).x * TILE + TILE / 2, deckTop = deckTopPx(floor);
+    rect(ctx, cx - 18, deckTop - 2, 36, 3, '#46547e');
+    neon(ctx, cx - 18, deckTop + 1, 36, 1.5, t.accent);
+    rect(ctx, cx - 18, deckTop + 3, 36, 2 * TILE - 3, 'rgba(53,230,255,0.07)');
+    rect(ctx, cx - 18, deckTop + 3, 1, 2 * TILE - 3, 'rgba(53,230,255,0.28)'); rect(ctx, cx + 17, deckTop + 3, 1, 2 * TILE - 3, 'rgba(53,230,255,0.28)');
+    // chevrons point up the walk line into the lift
+    ctx.save(); ctx.strokeStyle = t.accent; ctx.globalAlpha = 0.55; ctx.lineWidth = 1.4;
+    for (const dy of [0, 6]) { ctx.beginPath(); ctx.moveTo(cx - 5, deckTop + 16 + dy); ctx.lineTo(cx, deckTop + 11 + dy); ctx.lineTo(cx + 5, deckTop + 16 + dy); ctx.stroke(); }
+    ctx.restore();
+  }
+}
+
+export interface LiftOccluder { id: string; x: number; y: number; canvas: HTMLCanvasElement }
+
+/**
+ * The solid deck slab across each upper shaft, cut from the painted city so it matches it pixel for pixel. The scene
+ * draws these over the lift cabins and under every resident: a cabin passing a floor goes behind the slab and shows
+ * only in the openings between decks. Each piece is the slab and nothing else, so residents, names and bubbles are
+ * never covered, and the lit shaft openings stay visible.
+ */
+export function cyberLiftOccluders(city: HTMLCanvasElement): LiftOccluder[] {
+  return liftOccluderRects().map((r) => {
+    const { canvas, ctx } = surface(r.w, r.h);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(city, r.x * SCALE, r.y * SCALE, r.w * SCALE, r.h * SCALE, 0, 0, canvas.width, canvas.height);
+    return { id: r.id, x: r.x, y: r.y, canvas };
+  });
 }
 
 function paintStreet(ctx: CanvasRenderingContext2D): void {
@@ -171,7 +207,7 @@ function paintStreet(ctx: CanvasRenderingContext2D): void {
 
 function paintArcade(ctx: CanvasRenderingContext2D): void {
   // the neon arcade: a glass-fronted concourse under the Maker Tower where the kiosks stand
-  const x0 = 23 * TILE, w = 17 * TILE, y = (STREET_YB - 6) * TILE;
+  const x0 = 26 * TILE, w = 14 * TILE, y = (STREET_YB - 6) * TILE;
   rect(ctx, x0, y, w, 4 * TILE, '#0a1028'); rect(ctx, x0, y, w, 3, '#2a3560');
   neon(ctx, x0, y + 3, w, 2, CYBER.magenta);
   neonText(ctx, 'NEON ARCADE', x0 + w / 2, y + 16, CYBER.magenta, 9);

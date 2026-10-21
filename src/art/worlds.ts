@@ -1,6 +1,6 @@
 import type { TownMap } from '../world/map';
 import type { Building } from '../world/map';
-import { paintCyberCity, paintCyberMinimap, paintCyberRoom, paintCyberSky } from './cyberCity';
+import { cyberLiftOccluders, paintCyberCity, paintCyberMinimap, paintCyberRoom, paintCyberSky, type LiftOccluder } from './cyberCity';
 import { paintOrbitalBodies, paintOrbitalMinimap, paintOrbitalModule, paintOrbitalSky } from './orbitalSystem';
 
 /**
@@ -16,6 +16,8 @@ export interface WorldArt {
   room(b: Building, lit: boolean): HTMLCanvasElement;
   /** One canvas pixel per map tile, for the minimap, over the given background colour. */
   minimap(background: string): HTMLCanvasElement;
+  /** Solid pieces of the painted world that must draw over the lift cabins and under every resident. */
+  liftOccluders?: LiftOccluder[];
 }
 
 /** The minimap base of a skinned world, without painting the whole world. Null for any other map. */
@@ -27,7 +29,8 @@ export function paintWorldMinimap(map: TownMap, background: string): HTMLCanvasE
 
 export function paintWorld(map: TownMap): WorldArt | null {
   if (map.skin === 'cyber-city') {
-    return { sky: paintCyberSky(), ground: paintCyberCity(map), room: paintCyberRoom, minimap: (bg) => paintCyberMinimap(map, bg) };
+    const ground = paintCyberCity(map);
+    return { sky: paintCyberSky(), ground, room: paintCyberRoom, minimap: (bg) => paintCyberMinimap(map, bg), liftOccluders: cyberLiftOccluders(ground) };
   }
   if (map.skin === 'orbital-system') {
     return { sky: paintOrbitalSky(map), ground: paintOrbitalBodies(map), room: paintOrbitalModule, minimap: (bg) => paintOrbitalMinimap(map, bg) };

@@ -49,6 +49,14 @@ export interface TransitNetwork {
   route(from: Point, to: Point): RoutePlan | null;
 }
 
+/**
+ * Where a lift cabin stands relative to the tile it serves: the distance, in world pixels, from the centre of a
+ * boarding or exit tile up to the cabin's floor (negative is up). A resident walks the ordinary deck line to the
+ * vestibule tile; the cabin waits in the shaft opening behind it, its floor at the back edge of the deck rather than
+ * embedded in the deck artwork. The Cyber City painter and the verification derive their geometry from this.
+ */
+export const LIFT_CAR_BASE_OFFSET = -24;
+
 export const MIN_TRANSIT_MS = 600;
 export const MAX_TRANSIT_MS = 9000;
 

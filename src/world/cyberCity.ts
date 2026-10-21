@@ -3,7 +3,7 @@ import type { Place } from '../sim/toolMap';
 import type { Building, Prop, Station, TownMap, WorldRegion } from './map';
 import { propFooted, WorldGrid, addStation, groundFrom, makeBuilding } from './worldKit';
 import type { Point } from './pathfind';
-import { createTransitNetwork, type TransitConnector } from './transit';
+import { createTransitNetwork, LIFT_CAR_BASE_OFFSET, type TransitConnector } from './transit';
 
 /**
  * Cyber City: a 2D cutaway high-rise district.
@@ -52,6 +52,36 @@ export const CYBER_TOWERS: readonly CyberTower[] = [
 /** Tile of the lift vestibule on a floor of a tower. Floor 0 is the street. */
 export function vestibule(tower: CyberTower, floor: number): Point {
   return { x: tower.x0 + 2, y: floor === 0 ? STREET_YB - 1 : floorBase(floor) - 1 };
+}
+
+/**
+ * Lift geometry in world pixels. The cabin is in a shaft BEHIND the deck slabs. A resident walks the ordinary deck
+ * line (the middle row of the deck, the same row the stations use) to the vestibule tile; the cabin waits at the back
+ * edge of the deck with its floor on the deck's top edge, never inside the deck artwork. Between two decks the shaft
+ * is open; across a deck the slab is solid and the cabin passes behind it.
+ */
+export const LIFT_SHAFT_HALF_W = 22;
+export const DECK_H = 3 * TILE;
+/** Pixel row of the back (top) edge of a floor's deck. */
+export const deckTopPx = (floor: number): number => (floorBase(floor) - 2) * TILE;
+export const liftCentreX = (tower: CyberTower): number => vestibule(tower, 0).x * TILE + TILE / 2;
+/** Where the cabin's floor stands when it is level with a floor: the back edge of that floor's deck. */
+export function liftCabinFloorPx(tower: CyberTower, floor: number): number {
+  return vestibule(tower, floor).y * TILE + TILE / 2 + LIFT_CAR_BASE_OFFSET;
+}
+
+export interface LiftOccluderRect { id: string; tower: string; floor: number; x: number; y: number; w: number; h: number }
+/**
+ * The solid slab of every upper deck across the shaft. A cabin that is level with one floor passes behind the slabs of
+ * the floors between. The street deck needs none: the cabin never travels below its top edge.
+ */
+export function liftOccluderRects(): LiftOccluderRect[] {
+  const out: LiftOccluderRect[] = [];
+  for (const tower of CYBER_TOWERS) {
+    const cx = liftCentreX(tower);
+    for (const f of tower.floors) out.push({ id: `${tower.id}-f${f.floor}`, tower: tower.id, floor: f.floor, x: cx - LIFT_SHAFT_HALF_W, y: deckTopPx(f.floor), w: 2 * LIFT_SHAFT_HALF_W, h: DECK_H });
+  }
+  return out;
 }
 
 const STATION_X: Partial<Record<Place, number[]>> = {
@@ -103,8 +133,9 @@ export function buildCyberCityMap(): TownMap {
     }
   }
 
-  // ---- the neon arcade at street level: the market's kiosks
-  for (const x of [24, 27, 30, 33, 36, 39]) addStation(grid, stations, props, 'market', { x, y: STREET_YB - 1 }, 'up', 'kiosk');
+  // ---- the neon arcade at street level: the market's kiosks. They start right of the Maker Tower's lift landing (tile 24)
+  // so the lift threshold on the street is free of kiosks and of the arcade facade.
+  for (const x of [27, 29, 31, 33, 35, 37]) addStation(grid, stations, props, 'market', { x, y: STREET_YB - 1 }, 'up', 'kiosk');
 
   // ---- a bulletin board on the command floor: turns are pinned here
   const ops = CYBER_TOWERS[2]!;

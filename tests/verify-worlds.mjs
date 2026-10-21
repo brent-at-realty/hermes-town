@@ -34,7 +34,9 @@ const w = await load(`
   export { createTransitNetwork, validateTransit, labelRegions, transitPhase, transitPoint, riderVisible } from './src/world/transit.ts';
   export { strayWalkable } from './src/world/regions.ts';
   export { buildTownMap, buildGreenwoodMap, STALL_KINDS } from './src/world/map.ts';
-  export { buildCyberCityMap, CYBER_TOWERS, floorBase, vestibule } from './src/world/cyberCity.ts';
+  export { buildCyberCityMap, CYBER_TOWERS, floorBase, vestibule, liftOccluderRects, liftCabinFloorPx, deckTopPx, liftCentreX, LIFT_SHAFT_HALF_W } from './src/world/cyberCity.ts';
+  export { LIFT_CAR_BASE_OFFSET } from './src/world/transit.ts';
+  export { LIFT_DEPTHS, LIFECYCLE_FLOOR, EFFECT_DEPTHS, TRANSIT_DEPTH } from './src/scenes/depthBands.ts';
   export { buildOrbitalSystemMap, DOCKS } from './src/world/orbitalSystem.ts';
   export { PLACE_LABEL } from './src/sim/toolMap.ts';
   export { weatherOptionsFor } from './src/themes/environment.ts';
@@ -103,6 +105,38 @@ ok('Cyber City: Archive, Maker, Operations and Residential towers; every Place o
   const archiveF1 = net.regionOf(w.vestibule(w.CYBER_TOWERS[0], 1)), archiveF2 = net.regionOf(w.vestibule(w.CYBER_TOWERS[0], 2));
   assert.notEqual(archiveF1, archiveF2);
   assert.notEqual(net.regionOf(w.vestibule(w.CYBER_TOWERS[0], 1)), net.regionOf(map.entrance));
+});
+
+ok('Cyber City lifts: the cabin floor is the deck back edge on the ordinary walk line; every upper deck has a shaft-wide slab occluder; depth bands order shaft < slab < residents < lifecycle', () => {
+  const map = cyber();
+  assert.equal(w.LIFT_CAR_BASE_OFFSET, -24);
+  const deckRows = new Set();
+  for (const t of w.CYBER_TOWERS) for (const f of [0, ...t.floors.map((x) => x.floor)]) {
+    const v = w.vestibule(t, f);
+    assert.equal(v.y, w.floorBase(f) - 1, `${t.id} F${f}: the vestibule is on the deck's middle row, the stations' walk line`);
+    assert.equal(w.liftCabinFloorPx(t, f), w.deckTopPx(f), `${t.id} F${f}: the cabin floor is the back edge of the deck, clear of the deck art`);
+    assert.equal(w.deckTopPx(f), (w.floorBase(f) - 2) * TILE);
+    deckRows.add(v.y);
+  }
+  for (const s of map.stations) assert.ok(deckRows.has(s.tile.y), `station ${s.place} ${s.tile.x},${s.tile.y} is on a deck walk line`);
+  for (const c of map.transit.connectors) {
+    for (const p of [c.boarding, c.exit]) assert.ok(deckRows.has(p.y), `${c.id}: ${p.x},${p.y} is on a deck walk line`);
+  }
+  const rects = w.liftOccluderRects();
+  const upper = w.CYBER_TOWERS.flatMap((t) => t.floors.map((f) => [t, f.floor]));
+  assert.equal(rects.length, upper.length, 'a slab for every upper deck, none for the street');
+  for (const r of rects) {
+    const t = w.CYBER_TOWERS.find((x) => x.id === r.tower);
+    assert.equal(r.w, 2 * w.LIFT_SHAFT_HALF_W, 'the slab is exactly as wide as the shaft');
+    assert.equal(r.h, 3 * TILE, 'and exactly as deep as the deck');
+    assert.equal(r.x + r.w / 2, w.liftCentreX(t), 'centred on the shaft');
+    assert.equal(r.y, w.deckTopPx(r.floor));
+    assert.ok(r.w < 3 * TILE * 2, 'never a global rectangle across the tower');
+  }
+  const d = w.LIFT_DEPTHS;
+  assert.ok(d.car < d.doors && d.doors < d.passenger && d.passenger < d.indicator && d.indicator < d.occluder, 'shaft band is below the slab occluder');
+  assert.ok(d.car > -2 && d.occluder < 0, 'above terrain and below every resident and prop (depth = y >= 0)');
+  assert.ok(d.occluder < w.TRANSIT_DEPTH && w.TRANSIT_DEPTH < w.EFFECT_DEPTHS.grade && w.EFFECT_DEPTHS.night < w.LIFECYCLE_FLOOR, 'decorative and transit bands stay beneath the lifecycle floor');
 });
 
 ok('Orbital System: Helios Station, Mercury Lab, Forge Moon, Relay Garden; sun not walkable; empty space blocked', () => {
