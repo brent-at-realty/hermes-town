@@ -2,6 +2,17 @@
 
 All notable changes to Hermes Town Brent (formerly published as Hermes Town) are documented here.
 
+## Unreleased
+
+Version rationale: patch, presentation only. No wire protocol, plugin id, state layout, lifecycle or privacy change.
+
+### Fix: Cyber City lifts sit clear of the deck and pass behind the floors
+
+- The lift cabin was drawn with its floor in the middle of the deck artwork and sorted with its rider, so it overlapped the deck floor at every stop and was painted over the solid decks it passed. The cabin now waits in the shaft opening behind the deck, its floor on the deck's back edge (`LIFT_CAR_BASE_OFFSET`, 24 px above the centre of the vestibule tile), and the door frame, sill and rails are redrawn to match. Residents still walk the ordinary deck line (the middle row, the same row as the stations) to the vestibule tile; each landing now has a lit threshold plate with chevrons on that line.
+- While travelling, the cabin, its passenger and its floor indicator are hidden by the solid deck slabs and show only in the shaft openings between decks. A new `lift-occluder` layer holds one slab per upper deck, cut from the painted city so it matches it pixel for pixel, exactly the width of the shaft and the depth of the deck: it never covers a resident, a name tag, a bubble or an emote. New named depth band `LIFT_DEPTHS` in `src/scenes/depthBands.ts` (shaft band below the slab occluders, both below every resident and far below the lifecycle band). Under reduced motion the cabin still only stands at the origin and destination floors, correctly placed and never overlapping a deck between.
+- The Maker Tower's street lift landing was covered by the neon arcade and shared its tile with a market kiosk. The arcade facade now starts to the right of the lift and the six kiosks (still six market stations) are re-spaced two tiles apart, so the street threshold is free.
+- Verification: `scripts/verify-cyber-lift.mjs` (part of `npm run verify:worlds`) drives a real browser through boarding, mid-ride crossing of an intermediate deck (up and down), and exit. It asserts every lift connector boards and exits on the ordinary deck walk line, that the resident walks that path before and after the ride, and, from rendered pixels with the cabin drawn and hidden, that the cabin is visible in shaft openings and absent inside solid slab regions, with failing controls (slab hidden, slab sunk beneath the cabin) proving the measurement detects overlap and a control that lifts the slab above the name tags, bubbles and emotes. `tests/verify-worlds.mjs` covers the lift geometry and depth-band ordering.
+
 ## 0.6.0 - 2026-10-14
 
 Version rationale: minor, presentation only. No wire protocol, plugin id, state layout, lifecycle or privacy change.

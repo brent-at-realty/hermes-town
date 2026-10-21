@@ -22,7 +22,7 @@ import type { Building, TownMap } from '../world/map';
 import { applyPeopleKit } from '../themes/people';
 import type { ResolvedAppearance } from '../themes/resolve';
 import type { MapView } from '../themes/types';
-import { EFFECT_DEPTHS, LIFECYCLE_DEPTHS, SIGN_DEPTH, STALL_SIGN_DEPTH } from './depthBands';
+import { EFFECT_DEPTHS, LIFECYCLE_DEPTHS, LIFT_DEPTHS, SIGN_DEPTH, STALL_SIGN_DEPTH } from './depthBands';
 
 const ZOOMS = [1, 1.5, 2, 3, 4, 5];
 
@@ -129,6 +129,8 @@ export class TownScene extends Phaser.Scene {
   private created = false;
   /** Lifts and shuttles: present only on a map with a transit network. */
   transit: TransitLayer | null = null;
+  /** The solid deck slabs across the lift shafts (Cyber City): drawn over the lift cabins, under every resident. */
+  liftOccluders: Phaser.GameObjects.Image[] = [];
   private ambient: Ambient | null = null;
   /** One reusable image for stamping glows into render textures. */
   private stamp!: Phaser.GameObjects.Image;
@@ -185,6 +187,12 @@ export class TownScene extends Phaser.Scene {
       add('world-sky', world.sky); add('world-ground', world.ground);
       this.add.image(0, 0, 'world-sky').setOrigin(0, 0).setScale(0.5).setDepth(-13);
       this.terrainImages.push(this.add.image(0, 0, 'world-ground').setOrigin(0, 0).setScale(0.5).setDepth(-11));
+      // The solid deck slabs across the lift shafts draw over the cabins (shaft band) and under every resident.
+      this.liftOccluders = [];
+      for (const o of world.liftOccluders ?? []) {
+        add(`lift-occluder-${o.id}`, o.canvas);
+        this.liftOccluders.push(tagLayer(this.add.image(o.x, o.y, `lift-occluder-${o.id}`).setOrigin(0, 0).setScale(0.5).setDepth(LIFT_DEPTHS.occluder), 'lift-occluder'));
+      }
     } else {
       this.terrainImages.push(this.add.image(0, 0, 'terrain').setOrigin(0, 0).setScale(0.5).setDepth(-11));
       add('structures', paintStructures(map, art));
